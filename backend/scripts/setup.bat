@@ -2,6 +2,9 @@
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 
+:: Ensure we are executing from the 'backend' directory, even if double-clicked
+cd /d "%~dp0\.."
+
 echo ============================================================
 echo  ScholarOS - Windows Setup
 echo ============================================================
@@ -50,8 +53,6 @@ echo [3/5] Installing llama-cpp-python (pre-compiled CPU wheel)...
 echo       This avoids the need for Visual Studio Build Tools.
 echo.
 
-:: The official CPU-only wheel index maintained by the llama-cpp-python project.
-:: Pinned to a recent stable release — update this when upgrading llama-cpp-python.
 set WHEEL_URL=https://github.com/abetlen/llama-cpp-python/releases/download/v0.2.75/llama_cpp_python-0.2.75-cp310-cp310-win_amd64.whl
 
 pip install "%WHEEL_URL%" --quiet
@@ -120,18 +121,15 @@ echo ============================================================
 echo  Setup complete!
 echo ============================================================
 echo.
-echo  To start ScholarOS:
+echo  To start the ScholarOS backend:
 echo.
 echo    1. Activate the environment (if not already active):
 echo       venv\Scripts\activate
 echo.
 echo    2. Start the server:
-echo       python -m uvicorn ui.server:app --host 0.0.0.0 --port 8000 --reload
+echo       python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 echo.
-echo    3. Open in your browser:
-echo       http://localhost:8000
-echo.
-echo  If you have GNU make installed (via Chocolatey, Scoop, or winget):
+echo  If you have GNU make installed:
 echo    make run
 echo.
 pause

@@ -52,11 +52,8 @@ fetch-model-fallback:  ## Download fallback model: Qwen2.5 1.5B (~1.0 GB, for 4 
 # ── Run ────────────────────────────────────────────────────────────────────
 
 run: _check-model ## Start the ScholarOS FastAPI server (auto-reloads on code changes)
-    @echo "→ Starting ScholarOS on http://localhost:$(PORT) ..."
-    $(PYTHON) -m uvicorn api.main:app --host 0.0.0.0 --port $(PORT) --reload
-		--host 0.0.0.0 \
-		--port $(PORT) \
-		--reload
+	@echo "→ Starting ScholarOS on http://localhost:$(PORT) ..."
+	$(PYTHON) -m uvicorn api.main:app --host 0.0.0.0 --port $(PORT) --reload
 
 _check-model:
 	@if [ -z "$$(ls -A models/*.gguf 2>/dev/null)" ]; then \
@@ -80,12 +77,12 @@ test-coverage: ## Run tests and generate an HTML coverage report
 # ── Code quality ───────────────────────────────────────────────────────────
 
 lint:          ## Format code with black and sort imports with isort
-	$(PYTHON) -m black core/ modes/ ui/ tests/
-	$(PYTHON) -m isort core/ modes/ ui/ tests/
+	$(PYTHON) -m black core/ modes/ api/ tests/
+	$(PYTHON) -m isort core/ modes/ api/ tests/
 
 lint-check:    ## Check formatting without making changes (useful in CI)
-	$(PYTHON) -m black --check core/ modes/ ui/ tests/
-	$(PYTHON) -m isort --check-only core/ modes/ ui/ tests/
+	$(PYTHON) -m black --check core/ modes/ api/ tests/
+	$(PYTHON) -m isort --check-only core/ modes/ api/ tests/
 
 # ── Clean ──────────────────────────────────────────────────────────────────
 

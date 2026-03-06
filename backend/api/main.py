@@ -1,11 +1,10 @@
 """
-ui/server.py
-------------
+backend/api/main.py
+-------------------
 FastAPI application and routing layer for ScholarOS.
 
-Acts as the bridge between the web frontend and the Python backend.
-Serves static HTML/JS/CSS and exposes REST endpoints for document
-ingestion, streaming Q&A, and flashcard generation.
+Acts purely as a REST/SSE API backend. 
+A separate React+Vite frontend consumes these endpoints.
 """
 
 from __future__ import annotations
@@ -17,8 +16,7 @@ from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from core import LLMClient, VectorStore, ingest_pdf
@@ -30,18 +28,11 @@ from modes import FlashcardMode, QAMode
 # ---------------------------------------------------------------------------
 
 UPLOAD_DIR = Path("data/uploads")
-WEB_DIR    = Path(__file__).parent / "web"
-
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# Application lifespan — initialise heavy objects once, not at import time
-#
-# Using @asynccontextmanager lifespan instead of module-level globals means:
-#   • Importing this module in tests does NOT load the LLM or open ChromaDB.
-#   • Resources are torn down cleanly when the server shuts down.
-#   • `app.state` carries the objects so routes access them via `request.app.state`.
+# Application lifespan
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
@@ -69,10 +60,15 @@ app = FastAPI(
 )
 
 # CORS: allow_credentials=True is incompatible with allow_origins=["*"].
-# For a local-only tool we don't need credentials at all.
+# We explicitly allow the Vite dev server port (5173) and standard local ports.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,9 +77,6 @@ app.add_middleware(
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
-#
-# Separate request models per endpoint so field names match what app.js sends
-# and validation errors are meaningful rather than generic 422s.
 # ---------------------------------------------------------------------------
 
 class QARequest(BaseModel):
@@ -120,26 +113,15 @@ async def health():
 
 @app.post("/api/ingest", tags=["documents"])
 async def ingest_document(file: UploadFile = File(...)):
-    """
-    Accept a PDF upload, parse it, embed the chunks, and return a stable
-    document_id for use in subsequent API calls.
-
-    The original filename is stored as display metadata but is never used
-    as a file path or vector-store key — a UUID is used instead, preventing
-    path-traversal attacks and filename collisions between users.
-    """
+    """Accept a PDF upload, parse it, embed the chunks, and return a stable document_id."""
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    # Generate a collision-proof ID that is safe to use as a file path
     document_id = str(uuid.uuid4())
-    # Sanitise display name: strip any path components the client may have included
     display_name = Path(file.filename).name if file.filename else document_id
-
     temp_path = UPLOAD_DIR / f"{document_id}.pdf"
 
     try:
-        # Async read — does not block the event loop
         contents = await file.read()
         temp_path.write_bytes(contents)
 
@@ -147,8 +129,7 @@ async def ingest_document(file: UploadFile = File(...)):
         if not chunks:
             raise HTTPException(
                 status_code=422,
-                detail="No text could be extracted from this PDF. "
-                       "Is it a scanned image without OCR?",
+                detail="No text could be extracted from this PDF. Is it a scanned image without OCR?",
             )
 
         app.state.vector_store.add_chunks(chunks, source_id=document_id)
@@ -161,11 +142,9 @@ async def ingest_document(file: UploadFile = File(...)):
         }
 
     except HTTPException:
-        raise  # re-raise validation errors unchanged
-
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
-
     finally:
         if temp_path.exists():
             temp_path.unlink()
@@ -176,19 +155,8 @@ async def ingest_document(file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 
 def _sse_generator(token_iter):
-    """
-    Wrap a token iterator in Server-Sent Events format.
-
-    app.js expects:
-        data: <token>\\n\\n     (one line per token)
-        data: [DONE]\\n\\n      (signals end of stream)
-
-    Without this wrapper the frontend cursor spins forever because
-    onDone() only fires when it sees the [DONE] sentinel.
-    """
     try:
         for token in token_iter:
-            # Escape embedded newlines so each SSE message stays on one line
             safe = token.replace("\n", " ")
             yield f"data: {safe}\n\n"
     finally:
@@ -197,12 +165,7 @@ def _sse_generator(token_iter):
 
 @app.post("/api/qa", tags=["study"])
 async def qa_endpoint(request: QARequest):
-    """
-    Stream an answer to the student's question via Server-Sent Events.
-
-    The frontend connects with fetch() + ReadableStream and renders tokens
-    as they arrive. The [DONE] sentinel tells app.js to stop the cursor.
-    """
+    """Stream an answer to the student's question via Server-Sent Events."""
     token_iter = app.state.qa_mode.run_stream(
         user_input=request.question,
         source_id=request.document_id,
@@ -212,7 +175,6 @@ async def qa_endpoint(request: QARequest):
         _sse_generator(token_iter),
         media_type="text/event-stream",
         headers={
-            # Prevent nginx / proxies from buffering the stream
             "X-Accel-Buffering": "no",
             "Cache-Control":     "no-cache",
         },
@@ -225,11 +187,7 @@ async def qa_endpoint(request: QARequest):
 
 @app.post("/api/flashcards", tags=["study"])
 async def flashcards_endpoint(request: FlashcardRequest):
-    """
-    Generate structured flashcards from the selected document.
-    Returns a JSON list of {"front": ..., "back": ...} dicts.
-    """
-    # If no topic given, use a generic prompt that covers the whole document
+    """Generate structured flashcards from the selected document."""
     topic = request.topic or "all key concepts and definitions in this document"
 
     try:
@@ -250,11 +208,7 @@ async def flashcards_endpoint(request: FlashcardRequest):
 
 @app.post("/api/summary", tags=["study"])
 async def summary_endpoint(request: FlashcardRequest):
-    """
-    Generate a structured plain-text summary of the document.
-    Uses QAMode with a summary-specific prompt rather than a separate mode
-    so the v1.0 surface area stays small.
-    """
+    """Generate a structured plain-text summary of the document."""
     summary_query = (
         "Provide a structured summary of this document. "
         "Include: main topic, key arguments or findings, and important conclusions. "
@@ -265,7 +219,7 @@ async def summary_endpoint(request: FlashcardRequest):
         summary = app.state.qa_mode.run(
             user_input=summary_query,
             source_id=request.document_id,
-            top_k=10,  # wider context window for a whole-doc summary
+            top_k=10,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -279,56 +233,18 @@ async def summary_endpoint(request: FlashcardRequest):
 
 @app.get("/api/documents", tags=["documents"])
 async def list_documents():
-    """
-    Return all ingested documents as {id, name} objects.
-
-    The vector store only stores source_id (UUID). Display names are
-    stored as metadata on the first chunk of each document so they
-    survive server restarts.
-
-    NOTE: In v1.0 the display name falls back to the source_id if
-    metadata is unavailable — a known limitation noted in ROADMAP.md.
-    """
+    """Return all ingested documents as {id, name} objects."""
     sources = app.state.vector_store.list_sources()
-    # Shape the response to match what app.js expects: [{id, name}, ...]
     documents = [{"id": src, "name": src} for src in sources]
     return {"documents": documents}
 
 
 @app.post("/api/documents/delete", tags=["documents"])
 async def delete_document(request: DeleteRequest):
-    """
-    Remove all chunks for a document from the vector store.
-
-    Uses POST rather than DELETE so app.js can send a JSON body
-    without needing to encode the UUID in the URL path.
-    """
+    """Remove all chunks for a document from the vector store."""
     try:
         app.state.vector_store.delete_source(request.document_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"status": "success", "deleted": request.document_id}
-
-
-# ---------------------------------------------------------------------------
-# Static frontend — must be mounted LAST so API routes take priority
-# ---------------------------------------------------------------------------
-
-@app.get("/", include_in_schema=False)
-async def serve_index():
-    index_path = WEB_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(
-            status_code=503,
-            detail="Frontend not found. Expected ui/web/index.html to exist.",
-        )
-    return FileResponse(index_path)
-
-
-if WEB_DIR.exists():
-    app.mount(
-        "/",
-        StaticFiles(directory=str(WEB_DIR), html=True),
-        name="web",
-    )
