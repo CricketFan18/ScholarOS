@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# ScholarOS Assets (Crucial)
+models/*.gguf
+!models/.gitkeep
+
+# Local Databases
+.chromadb/
+
+# OS/IDEs
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# ── Project metadata ───────────────────────────────────────────────────────
+
+[project]
+name            = "scholaros"
+version         = "0.1.0"
+description     = "Local-first AI study assistant — offline RAG on your own documents"
+readme          = "README.md"
+requires-python = ">=3.10"
+license         = { text = "Apache-2.0" }
+
+authors = [
+  { name = "ScholarOS Contributors" }
+]
+
+keywords = [
+  "ai", "llm", "rag", "education", "offline",
+  "llama-cpp", "chromadb", "study-assistant"
+]
+
+# ── Runtime dependencies ───────────────────────────────────────────────────
+# Pinned with ~= (compatible release) for reproducibility.
+# ~= X.Y.Z allows patch-level updates (X.Y.*) but not minor-level breaks.
+
+dependencies = [
+  # Web server
+  "fastapi~=0.110.0",
+  "uvicorn~=0.29.0",
+  "python-multipart~=0.0.9",   # required by FastAPI for file upload (/api/ingest)
+
+  # Vector store + embeddings
+  "chromadb~=0.4.24",
+  "sentence-transformers~=2.6.0",
+
+  # Document parsing
+  "pymupdf~=1.24.0",
+
+  # Local LLM inference (in-process, no server)
+  # Windows users: see scripts/setup.bat for pre-compiled wheel instructions
+  "llama-cpp-python~=0.2.75",
+
+  # Model weight downloads from HuggingFace (resumable, verified)
+  "huggingface-hub~=0.23.0",
+
+  # Environment variable loading (.env support)
+  "python-dotenv~=1.0.0",
+]
+
+# ── Optional / dev dependencies ────────────────────────────────────────────
+
+[project.optional-dependencies]
+dev = [
+  "pytest~=8.1.1",
+  "pytest-asyncio~=0.23.6",
+  "httpx~=0.27.0",      # async test client for FastAPI (TestClient uses it)
+  "pytest-cov~=5.0.0",  # coverage reports
+  "black~=24.3.0",
+  "isort~=5.13.2",
+]
+
+# ── Package discovery ──────────────────────────────────────────────────────
+# 'scripts' is intentionally excluded — those are CLI utilities, not
+# importable Python packages. They are invoked via 'python scripts/...'
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["core*", "modes*", "api*"]
+exclude = ["tests*", "scripts*", "models*", "data*"]
+
+# Include static assets bundled inside the 'ui' package
+[tool.setuptools.package-data]
+"ui" = ["web/*.html", "web/*.css", "web/*.js"]
+
+# ── Tool configuration ─────────────────────────────────────────────────────
+
+[tool.black]
+line-length    = 88
+target-version = ["py310", "py311", "py312"]
+
+[tool.isort]
+profile                   = "black"
+known_first_party         = ["core", "modes", "ui"]
+force_sort_within_sections = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+addopts      = "-v --tb=short"
