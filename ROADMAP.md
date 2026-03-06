@@ -226,4 +226,4 @@ We welcome involvement from anyone who wants to help shape the future of this pr
 
 ---
 
-*ScholarOS — Samira Khan & Vivek Kesarwani — KIIT University — Open Source Forge 2025*
+*ScholarOS — Samira Khan & Vivek Kesarwani — KIIT University — Open Source Forge 2026*
