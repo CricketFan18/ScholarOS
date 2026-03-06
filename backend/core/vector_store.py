@@ -53,9 +53,14 @@ class VectorStore:
         db_path.mkdir(parents=True, exist_ok=True)
 
         # Persistent client — data survives across sessions
+        # In backend/core/vector_store.py
+
         self._client = chromadb.PersistentClient(
             path=str(db_path),
-            settings=Settings(anonymized_telemetry=False),
+            settings=Settings(
+                anonymized_telemetry=False,
+                is_persistent=True # Add this to ensure clean persistence
+            ),
         )
 
         self._collection = self._client.get_or_create_collection(

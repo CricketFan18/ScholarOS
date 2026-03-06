@@ -5,11 +5,18 @@ __pycache__/
 venv/
 .env
 
+# Build Artifacts
+*.egg-info/
+build/
+dist/
+
 # ScholarOS Assets (Crucial)
-models/*.gguf
+*.gguf
+.huggingface/
 !models/.gitkeep
 
-# Local Databases
+# Local Databases & Uploads
+data/
 .chromadb/
 
 # OS/IDEs

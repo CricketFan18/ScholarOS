@@ -26,26 +26,15 @@ keywords = [
 # ~= X.Y.Z allows patch-level updates (X.Y.*) but not minor-level breaks.
 
 dependencies = [
-  # Web server
   "fastapi~=0.110.0",
   "uvicorn~=0.29.0",
-  "python-multipart~=0.0.9",   # required by FastAPI for file upload (/api/ingest)
-
-  # Vector store + embeddings
+  "python-multipart~=0.0.9",
   "chromadb~=0.4.24",
+  "numpy<2.0.0",  # ADD THIS LINE to prevent NumPy 2.0 breakages
   "sentence-transformers~=2.6.0",
-
-  # Document parsing
   "pymupdf~=1.24.0",
-
-  # Local LLM inference (in-process, no server)
-  # Windows users: see scripts/setup.bat for pre-compiled wheel instructions
   "llama-cpp-python~=0.2.75",
-
-  # Model weight downloads from HuggingFace (resumable, verified)
   "huggingface-hub~=0.23.0",
-
-  # Environment variable loading (.env support)
   "python-dotenv~=1.0.0",
 ]
 
