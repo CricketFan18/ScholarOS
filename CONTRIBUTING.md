@@ -67,7 +67,7 @@ ui/        FastAPI server (router only) + decoupled index.html, style.css, app.j
 
 modes/     THE CONTRIBUTION ZONE.
            Every study mode is a standalone Python class inheriting from BaseMode.
-           Add a new mode by creating one file here. Nothing else needs to change.
+           Implement name, get_system_prompt(), and run(). One file. Nothing else needs to change.
 ```
 
 **The golden rule:** if you are adding a new study mode, you should only ever need to create one new file inside `modes/`. If you find yourself editing `core/`, stop and ask in the issue thread first.
@@ -377,8 +377,9 @@ tests/
 At minimum, test that:
 
 - The mode initialises without errors
-- `get_prompt_template()` returns a string containing `{context}` and `{query}`
-- `format_output()` returns a string given a string input
+- `name` property returns a non-empty string
+- `get_system_prompt()` returns a non-empty string
+- `run()` returns a string given a valid user input
 
 See `tests/test_modes.py` for the established pattern.
 
@@ -423,29 +424,92 @@ The fastest path to a merged contribution is adding a new study mode.
 5. Create `modes/your_mode_name.py` and inherit from `BaseMode`:
 
 ```python
+from __future__ import annotations
+
+from typing import Iterator, Optional
+
 from modes.base_mode import BaseMode
+
 
 class YourModeName(BaseMode):
     """One sentence describing what this mode does."""
 
-    def get_prompt_template(self) -> str:
-        return """You are a study assistant. Use only the context below.
+    @property
+    def name(self) -> str:
+        return "Your Mode Name"
 
-Context:
-{context}
+    def get_system_prompt(self) -> str:
+        """
+        System-level instruction sent to the LLM before every query.
+        Tell it how to behave, what role it plays, and what constraints to follow.
+        """
+        return (
+            "You are ScholarOS, an expert academic tutor. "
+            "Answer using only the provided document context. "
+            # Add your mode-specific instructions here.
+        )
 
-Student: {query}
+    def run(
+        self,
+        user_input: str,
+        source_id: Optional[str] = None,
+        top_k: int = 5,
+    ) -> str:
+        """
+        Blocking entry point. Retrieves context and returns a complete response string.
+        BaseMode._retrieve() handles the vector store query — call it here.
+        Return a plain string on error so the UI can display it gracefully.
+        """
+        try:
+            context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
+        except ValueError as exc:
+            return str(exc)
 
-Your response:"""
+        prompt = self.llm_client.build_rag_prompt(
+            system_prompt=self.get_system_prompt(),
+            context_chunks=context_chunks,
+            user_question=user_input,
+        )
+        return self.llm_client.generate(prompt=prompt)
 
-    def format_output(self, response: str) -> str:
-        return response
+    def run_stream(
+        self,
+        user_input: str,
+        source_id: Optional[str] = None,
+        top_k: int = 5,
+    ) -> Iterator[str]:
+        """
+        Optional but recommended. Streams the response token-by-token for the UI.
+        If omitted, the UI falls back to the blocking run() method.
+        """
+        try:
+            context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
+        except ValueError as exc:
+            yield str(exc)
+            return
+
+        prompt = self.llm_client.build_rag_prompt(
+            system_prompt=self.get_system_prompt(),
+            context_chunks=context_chunks,
+            user_question=user_input,
+        )
+        yield from self.llm_client.generate_stream(prompt=prompt)
 ```
 
 6. Create `tests/test_your_mode_name.py`
 7. Run `pytest tests/ -v`, `ruff check .`, `black .`
-8. Commit using the Conventional Commits format
+8. Commit using the Conventional Commits format — e.g. `feat(modes): add your mode name`
 9. Open a PR targeting `main` and link the issue
+
+**BaseMode contract at a glance:**
+
+| Method / Property | Required | Purpose |
+|---|---|---|
+| `name` | ✅ | Display name shown in the UI |
+| `get_system_prompt()` | ✅ | Role and constraints sent to the LLM |
+| `run()` | ✅ | Blocking — calls `_retrieve()` → `build_rag_prompt()` → `generate()` |
+| `run_stream()` | ⭕ Recommended | Streaming — same flow, yields tokens via `generate_stream()` |
+| `_retrieve()` | Provided | Do not override — inherited from BaseMode |
 
 You do not need to understand `core/` or `ui/` to make a meaningful contribution.
 

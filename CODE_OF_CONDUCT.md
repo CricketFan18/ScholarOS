@@ -135,4 +135,4 @@ This Code of Conduct is adapted from the [Contributor Covenant](https://www.cont
 
 ---
 
-*ScholarOS — KIIT University — Open Source Forge 2026*
+*ScholarOS — KIIT University — Open Source Forge 2025*
