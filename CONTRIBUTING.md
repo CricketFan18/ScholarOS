@@ -59,18 +59,19 @@ Even small improvements help.
 ScholarOS is divided into three strictly isolated layers.
 
 ```
-core/      Handles llama-cpp-python inference, PDF chunking, ChromaDB.
-           Locked down. Do not modify unless fixing a specific bug.
+backend/core/      Handles llama-cpp-python inference, PDF chunking, ChromaDB.
+                   Locked down. Do not modify unless fixing a specific bug.
 
-ui/        FastAPI server (router only) + decoupled index.html, style.css, app.js.
-           Great for frontend contributors. No core knowledge needed.
+backend/api/       FastAPI server — routing only, no business logic.
+frontend/          React + Vite single-page app — all UI code lives here.
+                   Great for frontend contributors. No core knowledge needed.
 
-modes/     THE CONTRIBUTION ZONE.
-           Every study mode is a standalone Python class inheriting from BaseMode.
-           Implement name, get_system_prompt(), and run(). One file. Nothing else needs to change.
+backend/modes/     THE CONTRIBUTION ZONE.
+                   Every study mode is a standalone Python class inheriting from BaseMode.
+                   Implement name, get_system_prompt(), and run(). One file. Nothing else needs to change.
 ```
 
-**The golden rule:** if you are adding a new study mode, you should only ever need to create one new file inside `modes/`. If you find yourself editing `core/`, stop and ask in the issue thread first.
+**The golden rule:** if you are adding a new study mode, you should only ever need to create one new file inside `backend/modes/`. If you find yourself editing `backend/core/`, stop and ask in the issue thread first.
 
 ---
 
@@ -99,11 +100,11 @@ git remote add upstream https://github.com/CricketFan18/ScholarOS.git
 5. Install dependencies
 
 ```bash
-# Linux / macOS
-make install
+# Linux / macOS / WSL
+python setup.py
 
 # Windows
-scripts\setup.bat
+backend\scripts\setup.bat
 ```
 
 The Windows script handles pre-compiled `llama-cpp-python` wheel installation to bypass C++ compilation errors on machines without build tools.
@@ -112,43 +113,43 @@ The Windows script handles pre-compiled `llama-cpp-python` wheel installation to
 
 ## Development Setup
 
-Recommended environment: Python 3.10+, 4 GB RAM minimum.
+Recommended environment: Python 3.10+, Node.js 18+, 4 GB RAM minimum.
 
-Download the default model (Phi-3 Mini, ~2.2 GB):
+Download the default model (Phi-3 Mini, ~2.3 GB):
 
 ```bash
 make fetch-model
 ```
 
-For constrained devices (2–3 GB RAM), set the fallback model in `.env` first:
+For constrained devices (2–3 GB RAM), use the fallback model instead:
 
 ```bash
-MODEL_NAME=qwen2.5-1.5b
-```
-
-Then run:
-
-```bash
-make fetch-model
+make fetch-model-fallback
 ```
 
 Activate the virtual environment:
 
 ```bash
-# Linux / macOS
-source .venv/bin/activate
+# Linux / macOS / WSL
+source venv/bin/activate
 
 # Windows
-.venv\Scripts\activate
+venv\Scripts\activate
 ```
 
 Run the project locally:
 
 ```bash
-make run
+python start.py
 ```
 
-The web interface opens at `http://localhost:8080`.
+The backend starts on `http://localhost:8000` and the frontend on `http://localhost:5173`.  
+On WSL, `start.py` auto-detects the correct network IP — open the URL it prints rather than `localhost`.
+
+**Wait for this line before using the app:**
+```
+[Startup] ✓ LLM ready. ScholarOS is fully loaded and ready!
+```
 
 ---
 
@@ -221,8 +222,9 @@ Example environment block:
 ```
 OS: Ubuntu 22.04
 Python: 3.11
-Model: phi3-mini
+Model: Phi-3-mini-4k-instruct-q4.gguf
 Available RAM: 8 GB
+WSL: yes / no
 ```
 
 **Feature / mode proposals** — use the [New Mode Proposal template](https://github.com/CricketFan18/ScholarOS/issues/new?template=new_mode.md).
@@ -244,11 +246,10 @@ Before submitting a pull request:
 2. Create a correctly named feature or bugfix branch
 3. Make your changes
 4. Write tests if adding new functionality
-5. Ensure all tests pass: `pytest tests/ -v`
-6. Run the linter: `ruff check .`
-7. Run the formatter: `black .`
-8. Update `CHANGELOG.md` under `[Unreleased]`
-9. Open a pull request targeting `main`
+5. Ensure all tests pass: `make test`
+6. Run the formatter: `make lint`
+7. Update `CHANGELOG.md` under `[Unreleased]`
+8. Open a pull request targeting `main`
 
 PR titles should be descriptive.
 
@@ -270,30 +271,15 @@ Link the related issue in your PR description using `Closes #<issue-number>`.
 
 **Python style**
 
-We follow PEP 8. Use the formatter before committing:
+We follow PEP 8. Run the formatter and import sorter before committing:
 
 ```bash
-black .
+make lint
 ```
 
-**Linting**
+This runs `black .` and `isort .` across the backend.
 
-```bash
-ruff check .
-```
-
-ruff replaces flake8, isort, and pyupgrade in a single fast tool.
-
-**pre-commit hooks**
-
-Both tools run automatically on `git commit` after `make install`. If your code fails, the commit is blocked. Fix the issue and commit again.
-
-```bash
-# Run manually on all files:
-pre-commit run --all-files
-```
-
-**Typing**
+**Type hints**
 
 Use type hints on all function signatures.
 
@@ -308,9 +294,9 @@ def extract_text(pdf_path: str) -> list[str]:
 
 Every class and public method needs at least a one-sentence docstring.
 
-**No `print()` statements**
+**Print statements**
 
-Use Python's `logging` module instead. `print()` in production code will be flagged in review.
+ScholarOS uses `print()` for startup and ingest progress messages — this is intentional so users running from a terminal can see exactly what the server is doing. New code should follow the same pattern: print clearly-labelled progress messages for operations that take more than a second, and stay silent for fast operations.
 
 ---
 
@@ -329,7 +315,7 @@ Examples:
 ```
 feat(modes): add socratic debate mode
 fix(core): handle unicode characters in PDF chunk extraction
-docs(contributing): add Windows setup troubleshooting steps
+docs(contributing): add WSL setup troubleshooting steps
 test(modes): add unit tests for flashcard output validation
 chore(deps): update llama-cpp-python to 0.2.90
 ```
@@ -346,7 +332,7 @@ chore     Build process, dependency updates
 style     Formatting only, no logic change
 ```
 
-Scopes match the directory name: `core`, `modes`, `ui`, `tests`, `scripts`, `docs`.
+Scopes match the directory name: `core`, `modes`, `api`, `frontend`, `tests`, `scripts`, `docs`.
 
 Rules:
 
@@ -362,13 +348,13 @@ Rules:
 Run the full test suite before submitting any PR:
 
 ```bash
-pytest tests/ -v
+make test
 ```
 
 If you add a new study mode, include a corresponding test file:
 
 ```
-tests/
+backend/tests/
     test_ingestion.py
     test_modes.py
     test_your_mode_name.py    ← required for new modes
@@ -381,7 +367,7 @@ At minimum, test that:
 - `get_system_prompt()` returns a non-empty string
 - `run()` returns a string given a valid user input
 
-See `tests/test_modes.py` for the established pattern.
+See `backend/tests/test_modes.py` for the established pattern.
 
 ---
 
@@ -420,8 +406,8 @@ The fastest path to a merged contribution is adding a new study mode.
 1. Browse [issues labelled `good first issue`](https://github.com/CricketFan18/ScholarOS/issues?q=label%3A%22good+first+issue%22)
 2. Leave a comment to claim the issue — a maintainer will assign it within 24 hours
 3. Set up your dev environment using the steps above
-4. Read `modes/qa_mode.py` — it shows exactly what a mode looks like in practice
-5. Create `modes/your_mode_name.py` and inherit from `BaseMode`:
+4. Read `backend/modes/qa_mode.py` — it shows exactly what a mode looks like in practice
+5. Create `backend/modes/your_mode_name.py` and inherit from `BaseMode`:
 
 ```python
 from __future__ import annotations
@@ -496,8 +482,8 @@ class YourModeName(BaseMode):
         yield from self.llm_client.generate_stream(prompt=prompt)
 ```
 
-6. Create `tests/test_your_mode_name.py`
-7. Run `pytest tests/ -v`, `ruff check .`, `black .`
+6. Create `backend/tests/test_your_mode_name.py`
+7. Run `make test` and `make lint`
 8. Commit using the Conventional Commits format — e.g. `feat(modes): add your mode name`
 9. Open a PR targeting `main` and link the issue
 
@@ -511,7 +497,7 @@ class YourModeName(BaseMode):
 | `run_stream()` | ⭕ Recommended | Streaming — same flow, yields tokens via `generate_stream()` |
 | `_retrieve()` | Provided | Do not override — inherited from BaseMode |
 
-You do not need to understand `core/` or `ui/` to make a meaningful contribution.
+You do not need to understand `backend/core/` or `frontend/` to make a meaningful contribution.
 
 ---
 

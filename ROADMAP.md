@@ -46,10 +46,13 @@ Implemented and shipped:
 
 - Local RAG pipeline using `llama-cpp-python` and ChromaDB (fully in-process, no external servers)
 - PDF ingestion with PyMuPDF — 50-token overlap chunking for academic multi-column layouts
-- Q&A Mode — questions answered and grounded in uploaded document context
+- Q&A Mode — streaming answers with full multi-turn conversation history
 - Flashcard Mode — auto-generated Q&A pairs from any topic or page range
-- Web interface — decoupled FastAPI backend + Vanilla HTML/CSS/JS frontend
-- Three-command setup: `make install` → `make fetch-model` → `make run`
+- Summary Mode — structured markdown summary with headings and key findings
+- Web interface — decoupled FastAPI backend + React + Vite frontend
+- Persistent chat history — switching tabs no longer loses the conversation
+- WSL auto-detection — `start.py` detects the WSL eth0 IP and configures the frontend automatically
+- Three-command setup: `python setup.py` → `make fetch-model` → `python start.py`
 - Windows support via `scripts/setup.bat` with pre-compiled wheel handling
 - Full documentation suite: README, CONTRIBUTING, CODE_OF_CONDUCT, ROADMAP, LICENSE
 
@@ -156,7 +159,7 @@ Contributors can help in several areas right now.
 
 ### Study Modes
 
-- Add new modes by inheriting from `BaseMode` in `modes/`
+- Add new modes by inheriting from `BaseMode` in `backend/modes/`
 - Improve prompt templates in existing modes
 - Build the Socratic debate mode or timeline builder
 
@@ -167,7 +170,7 @@ Contributors can help in several areas right now.
 
 ### Backend Development
 
-- Improve table and image extraction in `core/ingestion.py`
+- Improve table and image extraction in `backend/core/ingestion.py`
 - Optimise chunking strategy for different document types
 - Reduce memory footprint for low-RAM devices
 

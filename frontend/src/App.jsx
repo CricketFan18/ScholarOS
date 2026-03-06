@@ -1,3 +1,11 @@
+/**
+ * App.jsx
+ *
+ * Root component. Owns the two pieces of top-level state shared across the
+ * whole application: which document is active and which study mode is open.
+ * Everything else is handled by Sidebar and the three mode components.
+ */
+
 import { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatMode from './components/modes/ChatMode';
@@ -20,7 +28,8 @@ export default function App() {
       <Sidebar activeDocId={activeDocId} setActiveDocId={setActiveDocId} />
 
       <main className="flex-1 flex flex-col h-full relative overflow-hidden">
-        {/* Welcome overlay — shown when no document is selected */}
+        {/* Overlay rendered on top of everything when no document is selected.
+            backdrop-blur gives a frosted-glass effect over the tab content beneath. */}
         {!activeDocId && (
           <div className="absolute inset-0 z-10 bg-slate-50/80 backdrop-blur-sm flex items-center justify-center">
             <div className="bg-white p-8 rounded-2xl shadow-lg text-center max-w-md border border-slate-200">
@@ -32,7 +41,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Top navigation */}
+        {/* ── Tab bar ──────────────────────────────────────────────────── */}
         <div className="bg-white border-b border-slate-200 px-6 py-4 flex gap-4 shrink-0">
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
@@ -51,14 +60,15 @@ export default function App() {
         </div>
 
         {/*
-          key={activeDocId} forces a full remount of the active mode whenever
-          the document changes, clearing all stale local state (messages,
-          cards, summary) in one shot.
+          key={activeDocId} forces a full unmount+remount of the active mode
+          whenever the document changes. This is a deliberate escape hatch: it
+          clears all local state (messages, cards, summary) in a single operation
+          rather than threading reset logic through every child hook.
         */}
         <div key={activeDocId} className="flex-1 overflow-hidden">
-          {activeTab === 'chat'       && <ChatMode       activeDocId={activeDocId} />}
-          {activeTab === 'flashcards' && <FlashcardMode  activeDocId={activeDocId} />}
-          {activeTab === 'summary'    && <SummaryMode    activeDocId={activeDocId} />}
+          {activeTab === 'chat'       && <ChatMode      activeDocId={activeDocId} />}
+          {activeTab === 'flashcards' && <FlashcardMode activeDocId={activeDocId} />}
+          {activeTab === 'summary'    && <SummaryMode   activeDocId={activeDocId} />}
         </div>
       </main>
     </div>

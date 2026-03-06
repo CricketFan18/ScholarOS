@@ -21,6 +21,7 @@ The goal of this project is to make **AI-powered learning accessible anywhere, o
 - [Getting Started](#getting-started)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
+- [Adding a New Study Mode](#adding-a-new-study-mode)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -56,7 +57,7 @@ All models and processing run locally via `llama-cpp-python` — no external run
 
 Convert any document into:
 
-- **Q&A** — ask follow-up questions grounded in your material, streamed token-by-token
+- **Q&A** — ask follow-up questions grounded in your material, streamed token-by-token with multi-turn history
 - **Flashcards** — click-to-flip active recall cards generated on any topic
 - **Summary** — structured executive summary rendered as formatted markdown
 - (v1.1+) MCQs, Socratic debate, subject packs
@@ -87,10 +88,10 @@ Fully open and contribution-friendly under Apache 2.0.
 
 Example workflow:
 
-1. Run `python start.py` — the interface opens at `http://localhost:5173`
+1. Run `python start.py` — the interface opens automatically in your browser
 2. Upload a PDF (lecture notes, textbook chapter, research paper)
 3. The system parses, chunks, and embeds the document locally
-4. Switch between Q&A, Flashcards, and Summary tabs
+4. Switch between Q&A, Flashcards, and Summary tabs — conversation history persists across tab switches
 
 Example interactions:
 
@@ -127,7 +128,7 @@ FastAPI backend  (backend/api/main.py)
       │       sentence-transformers (all-MiniLM-L6-v2) → ChromaDB (local SQLite)
       │
       ├── LLM client  (backend/core/llm_client.py)
-      │       llama-cpp-python · lazy-loaded · thread-safe · streaming
+      │       llama-cpp-python · eagerly loaded at startup · thread-safe · streaming
       │
       └── Study mode plugins  (backend/modes/)
               BaseMode → QAMode, FlashcardMode
@@ -136,17 +137,18 @@ FastAPI backend  (backend/api/main.py)
 React + Vite frontend  (frontend/src/)
       │
       ├── Sidebar — PDF upload and document library
-      ├── ChatMode — streaming Q&A with multi-turn history
+      ├── ChatMode — streaming Q&A with persistent multi-turn history
       ├── FlashcardMode — click-to-flip card grid
       └── SummaryMode — markdown-rendered executive summary
 ```
 
 **Key design decisions:**
 
-- The LLM is loaded lazily on the first request — the server starts and passes health checks before the slow model load completes.
+- Both the embedding model and LLM are loaded eagerly at startup so the first upload and first Q&A are fast. The terminal prints `LLM ready` when the app is fully warm.
 - Q&A responses are streamed token-by-token via Server-Sent Events (SSE) so users see output immediately.
-- Every internal path is anchored to `__file__` so the app works correctly regardless of which directory uvicorn is invoked from.
-- The frontend communicates with the backend entirely via the REST/SSE API — the two can be run independently for development.
+- Chat history is lifted to the root component so switching tabs never loses the conversation.
+- Every internal path is anchored to `__file__` so the app works regardless of which directory uvicorn is invoked from.
+- On WSL, `start.py` auto-detects the eth0 IP and writes `frontend/.env.local` so Windows browsers can reach the backend without manual configuration.
 
 ---
 
@@ -181,10 +183,19 @@ python start.py
 
 `start.py` will:
 - Verify the venv and Node.js are present
-- Start the FastAPI backend on `http://localhost:8000`
-- Start the Vite frontend on `http://localhost:5173`
+- Start the FastAPI backend on port 8000 and load both models into memory
+- Start the Vite frontend on port 5173
 - Open your browser automatically
 - Shut both servers down cleanly on Ctrl-C
+
+**Wait for this line before using the app:**
+```
+[Startup] ✓ LLM ready. ScholarOS is fully loaded and ready!
+```
+
+### WSL users (Windows Subsystem for Linux)
+
+If you're running on WSL with a Windows browser, `start.py` handles this automatically — it detects the WSL network IP and writes it to `frontend/.env.local`. Open the URL printed in the terminal (e.g. `http://172.x.x.x:5173`) rather than `localhost:5173`.
 
 ### Make targets
 
@@ -279,7 +290,7 @@ scholaros/
 │
 └── frontend/
     ├── src/
-    │   ├── App.jsx                 # root component — owns activeDocId and activeTab state
+    │   ├── App.jsx                 # root — owns activeDocId, activeTab, and messages state
     │   ├── api/
     │   │   └── client.js           # axios instance + endpoint registry
     │   ├── components/
@@ -361,7 +372,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full walkthrough.
 
 | Version | Status | Key Features |
 |---|---|---|
-| v1.0.0 | ✅ Current | Q&A (streaming + multi-turn), Flashcards, Summary, React + Vite frontend, unified launcher |
+| v1.0.0 | ✅ Current | Q&A (streaming + multi-turn), Flashcards, Summary, React + Vite frontend, unified launcher, WSL support |
 | v1.1.0 | 🔨 In Progress | MCQ generator, subject packs, advanced PDF parsing (tables + images) |
 | v1.2.0 | 📋 Planned | Socratic debate mode, timeline builder, progress dashboard, multi-file sessions |
 | v2.0.0 | 🌱 Vision | Mobile ports via llama.cpp Android bindings, voice I/O, multi-language support |
