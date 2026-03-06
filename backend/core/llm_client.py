@@ -36,7 +36,8 @@ except ImportError:
 # Constants / defaults
 # ---------------------------------------------------------------------------
 
-MODELS_DIR = Path(os.getenv("SCHOLAROS_MODELS_DIR", "models"))
+_HERE      = Path(__file__).parent.parent.resolve()   # → backend/
+MODELS_DIR = Path(os.getenv("SCHOLAROS_MODELS_DIR", str(_HERE / "models")))
 
 # Environment variables allow operators to swap models without changing code.
 DEFAULT_MODEL_FILENAME  = os.getenv("SCHOLAROS_MODEL_FILE", "Phi-3-mini-4k-instruct-q4.gguf")

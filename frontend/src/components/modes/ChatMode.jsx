@@ -1,49 +1,71 @@
+/**
+ * components/modes/ChatMode.jsx
+ *
+ * Streaming Q&A chat interface. Renders a scrollable message history,
+ * streams assistant responses token-by-token via useStreamChat, and
+ * provides a text input bar at the bottom.
+ */
+
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, AlertCircle, Trash2 } from 'lucide-react';
 import { useStreamChat } from '../../hooks/useStreamChat';
 import MarkdownRenderer from '../common/MarkdownRenderer';
 
+/**
+ * @param {object}      props
+ * @param {string|null} props.activeDocId - ID of the currently selected document.
+ */
 export default function ChatMode({ activeDocId }) {
   const [input, setInput] = useState('');
   const { messages, isTyping, error, sendMessage, clearChat } = useStreamChat(activeDocId);
+
+  // Ref attached to an invisible div at the bottom of the message list —
+  // calling scrollIntoView on it keeps the latest message visible.
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Clear chat whenever the document changes; clearChat is stable (useCallback)
+  // Reset conversation whenever the user switches to a different document.
+  // clearChat is wrapped in useCallback so this effect doesn't re-run unnecessarily.
   useEffect(() => {
     clearChat();
   }, [activeDocId, clearChat]);
 
-  // Only scroll when there are messages — avoids no-op on mount
+  // Auto-scroll on every new message or token. Guard prevents a no-op scroll on first mount.
   useEffect(() => {
     if (messages.length > 0) scrollToBottom();
   }, [messages]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    sendMessage(input);
+    if (!input.trim() || isTyping) return;
+
+    // Pass `messages` explicitly so sendMessage has the current history without
+    // relying on a closure capture (which would read a stale value if React
+    // batches the state update from the previous setMessages call).
+    sendMessage(input, messages);
     setInput('');
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      {/* Message list */}
+      {/* ── Message list ─────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-400 select-none">
-            Ask a complex question about your document.
+            Ask a question about your document.
           </div>
         ) : (
           <>
             {messages.map((msg, idx) => (
+              // User messages are right-aligned via flex-row-reverse; assistant left-aligned.
               <div
                 key={idx}
                 className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
               >
+                {/* Avatar */}
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm ${
                     msg.role === 'user'
@@ -56,6 +78,7 @@ export default function ChatMode({ activeDocId }) {
                     : <Bot className="w-5 h-5" />}
                 </div>
 
+                {/* Bubble */}
                 <div
                   className={`max-w-[80%] p-5 rounded-2xl shadow-sm ${
                     msg.role === 'user'
@@ -63,6 +86,7 @@ export default function ChatMode({ activeDocId }) {
                       : 'bg-white border border-slate-200 text-slate-800 rounded-tl-none'
                   }`}
                 >
+                  {/* User text is plain; assistant text may contain markdown. */}
                   {msg.role === 'user' ? (
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                   ) : (
@@ -72,7 +96,7 @@ export default function ChatMode({ activeDocId }) {
               </div>
             ))}
 
-            {/* Clear chat button — only visible when there are messages */}
+            {/* Clear button — only rendered when there is something to clear */}
             <div className="flex justify-center pt-2">
               <button
                 onClick={clearChat}
@@ -85,6 +109,7 @@ export default function ChatMode({ activeDocId }) {
           </>
         )}
 
+        {/* Invisible anchor used by scrollToBottom */}
         <div ref={messagesEndRef} />
 
         {error && (
@@ -95,7 +120,7 @@ export default function ChatMode({ activeDocId }) {
         )}
       </div>
 
-      {/* Input bar */}
+      {/* ── Input bar ────────────────────────────────────────────────── */}
       <div className="p-4 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <form
           onSubmit={handleSubmit}

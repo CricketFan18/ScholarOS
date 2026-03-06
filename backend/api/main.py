@@ -17,6 +17,7 @@ A separate React + Vite frontend consumes these endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,7 +36,10 @@ from modes import FlashcardMode, QAMode
 # Constants
 # ---------------------------------------------------------------------------
 
-UPLOAD_DIR    = Path("data/uploads")
+# Anchor to this file's location so the path resolves correctly regardless of
+# which directory uvicorn is launched from (the --reload worker can shift cwd).
+_HERE         = Path(__file__).parent.parent.resolve()   # → backend/
+UPLOAD_DIR    = _HERE / "data" / "uploads"
 MAX_PDF_BYTES = 50 * 1024 * 1024   # 50 MB hard cap — prevents memory-exhaustion via large uploads
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,20 +54,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     FastAPI lifespan context manager — runs startup and shutdown logic.
 
-    All expensive singletons (model loading, DB connection) are created once
-    here and stored on `app.state` so every request handler can access them
-    without re-initialising. This avoids the thread-safety issues that arise
-    from module-level globals in async applications.
+    Eagerly loads both the embedding model (via VectorStore) and the LLM
+    (via lc.llm) so the first real request is fast. Without this, the first
+    upload or Q&A blocks for 30-60s while models load from disk.
 
-    Teardown (after `yield`) is intentionally empty: llama.cpp frees GPU/CPU
-    memory when its Python object is garbage-collected on process exit.
+    lc.llm is a lazy property — we access it on a thread pool executor so
+    the event loop isn't blocked and uvicorn can still handle health checks
+    while the model loads.
     """
-    vs = VectorStore()
+    print("[Startup] Loading embedding model...")
+    vs = VectorStore()   # loads sentence-transformers model immediately
+    print("[Startup] Embedding model ready.")
+
+    print("[Startup] Loading LLM — this takes 20-60s, please wait...")
     lc = LLMClient()
+    await asyncio.get_event_loop().run_in_executor(None, lambda: lc.llm)
+    print("[Startup] ✓ LLM ready. ScholarOS is fully loaded and ready!")
+
     app.state.vector_store   = vs
     app.state.llm_client     = lc
     app.state.qa_mode        = QAMode(vs, lc)
     app.state.flashcard_mode = FlashcardMode(vs, lc)
+
     yield
     # Shutdown — llama.cpp frees memory on GC
 
@@ -90,6 +102,7 @@ app.add_middleware(
         "http://localhost:8000",
         "http://127.0.0.1:8000",
     ],
+    allow_origin_regex=r"http://172\.\d+\.\d+\.\d+(:\d+)?",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,7 +117,7 @@ class QARequest(BaseModel):
     question:    str           = Field(...,  description="The student's question")
     document_id: Optional[str] = Field(None, description="Restrict search to one document; None searches all")
     top_k:       int           = Field(5,    ge=1, le=20)
-    history:     list[dict]   = Field(
+    history:     list[dict]    = Field(
         default_factory=list,
         description="Recent chat turns [{role, content}] for multi-turn context",
     )
@@ -185,6 +198,7 @@ async def ingest_document(file: UploadFile = File(...)):
 
     try:
         temp_path.write_bytes(contents)
+        print(f"[Ingest] Processing '{display_name}' ({len(contents)} bytes)...")
 
         chunks = ingest_pdf(temp_path)
         if not chunks:
@@ -196,11 +210,13 @@ async def ingest_document(file: UploadFile = File(...)):
                 ),
             )
 
+        print(f"[Ingest] Embedding {len(chunks)} chunks for '{display_name}'...")
         app.state.vector_store.add_chunks(
             chunks,
             source_id=document_id,
             display_name=display_name,
         )
+        print(f"[Ingest] ✓ '{display_name}' stored successfully ({document_id})")
 
         return {
             "status":      "success",
@@ -212,6 +228,7 @@ async def ingest_document(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as exc:
+        print(f"[Ingest] ERROR: {exc}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
     finally:
         # Always clean up the temp file, even on failure, to avoid accumulating

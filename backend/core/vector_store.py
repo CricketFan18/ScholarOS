@@ -44,7 +44,8 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_DB_PATH    = Path("data/chroma_db")
+_HERE           = Path(__file__).parent.parent.resolve()   # → backend/
+DEFAULT_DB_PATH = _HERE / "data" / "chroma_db"
 DEFAULT_COLLECTION = "scholaros_docs"
 SOURCES_COLLECTION = "scholaros_sources"   # lightweight document registry
 EMBEDDING_MODEL    = "all-MiniLM-L6-v2"   # ~90 MB; fast on CPU, 384-dim embeddings

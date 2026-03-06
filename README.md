@@ -18,8 +18,7 @@ The goal of this project is to make **AI-powered learning accessible anywhere, o
 - [Features](#features)
 - [Demo](#demo)
 - [Architecture](#architecture)
-- [Installation](#installation)
-- [Usage](#usage)
+- [Getting Started](#getting-started)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
 - [Roadmap](#roadmap)
@@ -37,10 +36,10 @@ ScholarOS transforms documents into **active learning experiences**.
 
 By combining **local language models, document parsing, and a modular study mode system**, ScholarOS creates a study partner that:
 
-- answers questions grounded in your actual notes
+- answers questions grounded in your actual notes, with full multi-turn conversation support
 - generates flashcard pairs on any topic
-- explains concepts with real-world analogies
-- runs entirely inside a single Python process — no cloud, no daemon, no subscription
+- produces structured summaries with headings and key findings
+- runs entirely on-device — no cloud, no daemon, no subscription
 
 All processing occurs **locally on the user's device**. Your notes never leave your machine.
 
@@ -50,16 +49,16 @@ All processing occurs **locally on the user's device**. Your notes never leave y
 
 ### Offline AI Learning
 
-No internet connection required.  
+No internet connection required after setup.  
 All models and processing run locally via `llama-cpp-python` — no external runtime to install.
 
 ### PDF to Study Sessions
 
 Convert any document into:
 
-- Q&A sessions grounded in your material
-- Flashcard pairs for active recall
-- Concept explanations with analogies
+- **Q&A** — ask follow-up questions grounded in your material, streamed token-by-token
+- **Flashcards** — click-to-flip active recall cards generated on any topic
+- **Summary** — structured executive summary rendered as formatted markdown
 - (v1.1+) MCQs, Socratic debate, subject packs
 
 ### Lightweight Architecture
@@ -73,7 +72,7 @@ Designed to run on:
 ### Modular Contribution System
 
 Every study mode is a standalone plugin.  
-Add a new mode by creating one file in `modes/` — implement `name`, `get_system_prompt()`, and `run()`. No core knowledge required.  
+Add a new mode by creating one file in `backend/modes/` — implement `name`, `get_system_prompt()`, and `run()`. No core knowledge required.  
 This is the 15-minute contribution entry point.
 
 ### Open Source
@@ -88,141 +87,161 @@ Fully open and contribution-friendly under Apache 2.0.
 
 Example workflow:
 
-1. Run `make run` — the interface opens at `http://localhost:8080`
+1. Run `python start.py` — the interface opens at `http://localhost:5173`
 2. Upload a PDF (lecture notes, textbook chapter, research paper)
-3. The system parses and indexes the document locally
-4. Select a study mode and start your session
+3. The system parses, chunks, and embeds the document locally
+4. Switch between Q&A, Flashcards, and Summary tabs
 
 Example interactions:
 
 ```
 # Q&A Mode
-User:   What is the difference between mitosis and meiosis?
-ScholarOS: Based on your notes (Lecture 3, page 12):
-           Mitosis produces two identical diploid cells used for growth.
-           Meiosis produces four haploid cells used for reproduction.
+User:      What is the difference between mitosis and meiosis?
+ScholarOS: Based on your notes:
+           Mitosis produces two identical diploid cells used for growth and repair.
+           Meiosis produces four haploid cells used for sexual reproduction.
+
+User:      Which one requires crossing over?
+ScholarOS: Meiosis requires crossing over, which occurs during prophase I...
 
 # Flashcard Mode
-User:   Generate 5 flashcards on thermodynamics
-ScholarOS: Q1: What does the first law of thermodynamics state?
-           A1: Energy cannot be created or destroyed, only converted.
+User:      Generate flashcards on thermodynamics
+ScholarOS: Q: What does the first law of thermodynamics state?
+           A: Energy cannot be created or destroyed, only converted between forms.
 ```
 
 ---
 
 ## Architecture
 
-High-level system architecture:
-
 ```
-PDF Input
-   │
-   ▼
-Document Parser (PyMuPDF — 50-token overlap chunking)
-   │
-   ▼
-Embedding Generator (sentence-transformers — all-MiniLM-L6-v2)
-   │
-   ▼
-Vector Storage (ChromaDB — embedded, local SQLite)
-   │
-   ▼
-Local Language Model (llama-cpp-python — Phi-3 Mini GGUF)
-   │
-   ▼
-Study Mode Plugin (modes/ — Q&A, Flashcard, and community modes)
-   │
-   ▼
-Web Interface (FastAPI + Vanilla HTML/CSS/JS)
+PDF Upload (browser)
+      │
+      ▼
+FastAPI backend  (backend/api/main.py)
+      │
+      ├── Ingestion pipeline  (backend/core/ingestion.py)
+      │       PyMuPDF text extraction → whitespace normalisation → overlapping chunks
+      │
+      ├── Vector store  (backend/core/vector_store.py)
+      │       sentence-transformers (all-MiniLM-L6-v2) → ChromaDB (local SQLite)
+      │
+      ├── LLM client  (backend/core/llm_client.py)
+      │       llama-cpp-python · lazy-loaded · thread-safe · streaming
+      │
+      └── Study mode plugins  (backend/modes/)
+              BaseMode → QAMode, FlashcardMode
+              (add new modes here)
+
+React + Vite frontend  (frontend/src/)
+      │
+      ├── Sidebar — PDF upload and document library
+      ├── ChatMode — streaming Q&A with multi-turn history
+      ├── FlashcardMode — click-to-flip card grid
+      └── SummaryMode — markdown-rendered executive summary
 ```
 
-Main components:
+**Key design decisions:**
 
-- `core/ingestion.py` — PDF parsing with 50-token overlap. Public API: `ingest_pdf()`, `extract_text_from_pdf()`, `chunk_text()`
-- `core/vector_store.py` — ChromaDB embedded interface. Public class: `VectorStore`
-- `core/llm_client.py` — llama-cpp-python wrapper. Exposes `build_rag_prompt()`, `generate()`, `generate_stream()`
-- `core/__init__.py` — single import surface: `from core import ingest_pdf, VectorStore, LLMClient`
-- `modes/base_mode.py` — abstract base. Implement `name`, `get_system_prompt()`, and `run()` to add a new mode
-- `modes/` — contribution zone, one file per study mode
-- `ui/server.py` — FastAPI router, no business logic
-- `ui/web/` — decoupled frontend (index.html, style.css, app.js)
+- The LLM is loaded lazily on the first request — the server starts and passes health checks before the slow model load completes.
+- Q&A responses are streamed token-by-token via Server-Sent Events (SSE) so users see output immediately.
+- Every internal path is anchored to `__file__` so the app works correctly regardless of which directory uvicorn is invoked from.
+- The frontend communicates with the backend entirely via the REST/SSE API — the two can be run independently for development.
 
 ---
 
-## Installation
+## Getting Started
 
-Clone the repository:
+### Prerequisites
 
-```bash
-git clone https://github.com/CricketFan18/ScholarOS.git
-cd ScholarOS
-```
+| Tool | Minimum version | Required for |
+|---|---|---|
+| Python | 3.10 | Backend (always) |
+| Node.js | 18 | Frontend |
+| npm | 9 | Frontend (ships with Node.js) |
 
-Install dependencies:
+Node.js is only required if you want to run the frontend. The backend API works standalone.
 
-```bash
-# Linux / macOS
-make install
-
-# Windows
-scripts\setup.bat
-```
-
-The Windows script handles pre-compiled `llama-cpp-python` wheel installation to bypass C++ compilation errors automatically.
-
-Download the default model (Phi-3 Mini, ~2.2 GB):
+### Quick start
 
 ```bash
-make fetch-model
+# 1. Clone and enter the repo
+git clone https://github.com/CricketFan18/ScholarOS && cd scholaros
+
+# 2. Full setup — Python venv + npm dependencies, one command
+python setup.py
+
+# 3. Download a model
+make fetch-model            # Phi-3 Mini (~2.3 GB), recommended
+make fetch-model-fallback   # Qwen2.5 1.5B (~1 GB), for machines with < 6 GB RAM
+
+# 4. Start everything
+python start.py
 ```
 
-For constrained devices (2–3 GB RAM), set the fallback model first:
+`start.py` will:
+- Verify the venv and Node.js are present
+- Start the FastAPI backend on `http://localhost:8000`
+- Start the Vite frontend on `http://localhost:5173`
+- Open your browser automatically
+- Shut both servers down cleanly on Ctrl-C
+
+### Make targets
 
 ```bash
-# In .env:
-MODEL_NAME=qwen2.5-1.5b
-
-make fetch-model
+make install-all          # Python venv + npm deps (same as python setup.py)
+make fetch-model          # download Phi-3 Mini weights (~2.3 GB)
+make fetch-model-fallback # download Qwen2.5 1.5B weights (~1 GB)
+make run                  # backend + frontend + browser (wraps start.py)
+make run-backend          # backend only
+make run-frontend         # Vite dev server only (backend must be running)
+make test                 # run the full backend test suite
+make test-coverage        # tests + HTML coverage report (backend/htmlcov/)
+make lint                 # format Python with black + isort
+make clean                # remove venv, node_modules, ChromaDB data, caches
 ```
 
----
+### Developer workflow (decoupled servers)
 
-## Usage
-
-Run the application:
+When you need hot-reload on both sides independently:
 
 ```bash
-make run
+# Terminal 1
+python start.py --backend-only
+
+# Terminal 2
+python start.py --frontend-only
 ```
 
-Open the interface in your browser:
+### `start.py` reference
 
 ```
-http://localhost:8080
+usage: start.py [-h] [--backend-only] [--frontend-only] [--no-browser] [--port PORT]
+
+  --backend-only    Start only the FastAPI backend
+  --frontend-only   Start only the Vite dev server
+  --no-browser      Don't auto-open the browser on startup
+  --port PORT       Backend port (default: 8000)
 ```
 
-Upload a PDF and select a study mode to begin.
+### Node.js not installed?
 
-**Available study modes:**
-
-```
-qa          Ask questions grounded in your uploaded documents
-flashcard   Generate Q&A flashcard pairs from any topic or page range
-```
-
-**Switching modes:**
-
-```
-mode qa
-mode flashcard
-```
-
-**Uploading documents:**
+`python setup.py` will warn and continue — the Python environment is still set up correctly.  
+You can run the backend alone and add Node.js later:
 
 ```bash
-upload path/to/your/notes.pdf
-upload path/to/slides/*.pdf
+python start.py --backend-only
 ```
+
+Install hints:
+
+| Platform | Command |
+|---|---|
+| macOS | `brew install node` |
+| Ubuntu/Debian | `sudo apt install nodejs npm` |
+| Fedora | `sudo dnf install nodejs npm` |
+| Windows | Download from [nodejs.org](https://nodejs.org/en/download) |
+| Any (nvm) | [github.com/nvm-sh/nvm](https://github.com/nvm-sh/nvm) |
 
 ---
 
@@ -230,62 +249,111 @@ upload path/to/slides/*.pdf
 
 ```
 scholaros/
-    core/
-        ingestion.py        PDF parser — ingest_pdf(), extract_text_from_pdf(), chunk_text()
-        vector_store.py     ChromaDB embedded interface — VectorStore
-        llm_client.py       llama-cpp-python wrapper — build_rag_prompt(), generate(), generate_stream()
-        __init__.py         Public API surface — from core import ingest_pdf, VectorStore, LLMClient
-    modes/
-        base_mode.py        Abstract base class all modes inherit
-        qa_mode.py          Q&A study mode
-        flashcard_mode.py   Flashcard generation mode
-    ui/
-        server.py           FastAPI application (router only)
-        web/
-            index.html      Decoupled UI structure
-            style.css       Decoupled styles
-            app.js          Decoupled client logic
-    scripts/
-        download_model.py   Pulls .gguf weights from HuggingFace
-        setup.bat           Windows setup with pre-compiled wheels
-    models/                 Git-ignored — holds .gguf weight files
-    tests/
-        test_ingestion.py
-        test_modes.py
-    README.md
-    CONTRIBUTING.md
-    CODE_OF_CONDUCT.md
-    ROADMAP.md
-    LICENSE
-    Makefile
-    pyproject.toml
-    .env.example
+├── start.py                        # unified launcher — starts backend + frontend
+├── setup.py                        # full project setup (Python venv + npm)
+├── Makefile                        # developer shortcuts
+│
+├── backend/
+│   ├── api/
+│   │   └── main.py                 # FastAPI app — endpoints only, no business logic
+│   ├── core/
+│   │   ├── __init__.py             # public surface: ingest_pdf, VectorStore, LLMClient
+│   │   ├── ingestion.py            # PDF parsing → chunking pipeline
+│   │   ├── vector_store.py         # ChromaDB wrapper — embed, store, query, delete
+│   │   └── llm_client.py           # llama-cpp-python wrapper — generate, stream, prompt builder
+│   ├── modes/
+│   │   ├── __init__.py
+│   │   ├── base_mode.py            # abstract base — implement 3 methods to add a mode
+│   │   ├── qa_mode.py              # streaming Q&A with multi-turn history
+│   │   └── flashcard_mode.py       # structured flashcard generation + parser
+│   ├── tests/
+│   │   ├── conftest.py             # shared fixtures
+│   │   ├── test_api.py             # HTTP-level endpoint tests
+│   │   ├── test_ingestion.py       # PDF parsing and chunking unit tests
+│   │   └── test_modes.py           # study mode unit tests
+│   ├── scripts/
+│   │   ├── download_model.py       # downloads .gguf weights from HuggingFace
+│   │   └── setup.bat               # Windows setup helper
+│   ├── pyproject.toml              # Python package definition and dependencies
+│   └── .env.example                # environment variable reference
+│
+└── frontend/
+    ├── src/
+    │   ├── App.jsx                 # root component — owns activeDocId and activeTab state
+    │   ├── api/
+    │   │   └── client.js           # axios instance + endpoint registry
+    │   ├── components/
+    │   │   ├── Sidebar.jsx         # PDF upload + document library
+    │   │   ├── common/
+    │   │   │   └── MarkdownRenderer.jsx  # react-markdown with Tailwind Typography
+    │   │   └── modes/
+    │   │       ├── ChatMode.jsx        # streaming Q&A chat interface
+    │   │       ├── FlashcardMode.jsx   # click-to-flip card grid
+    │   │       └── SummaryMode.jsx     # markdown summary panel
+    │   └── hooks/
+    │       ├── useDocuments.js     # fetch, upload, delete document library
+    │       ├── useStreamChat.js    # SSE streaming + multi-turn history
+    │       ├── useFlashcards.js    # flashcard generation state
+    │       └── useSummary.js       # summary generation state
+    ├── package.json
+    └── vite.config.js
 ```
 
 ---
 
 ## Configuration
 
-Copy the example config and edit as needed:
+Copy `backend/.env.example` to `backend/.env` (done automatically by `python setup.py`):
 
 ```bash
-cp .env.example .env
+cp backend/.env.example backend/.env
 ```
 
-Available settings in `.env`:
+Available environment variables:
 
-```
-MODEL_NAME=phi3-mini
-CHUNK_SIZE=512
-TOP_K=5
-UI_PORT=8080
+| Variable | Default | Description |
+|---|---|---|
+| `SCHOLAROS_MODELS_DIR` | `backend/models` | Directory containing `.gguf` model files |
+| `SCHOLAROS_MODEL_FILE` | `Phi-3-mini-4k-instruct-q4.gguf` | Model filename to load |
+
+To switch models, download an alternative `.gguf` file into `backend/models/` and update `SCHOLAROS_MODEL_FILE` in `backend/.env`.
+
+---
+
+## Adding a New Study Mode
+
+Every mode lives in a single file in `backend/modes/`. To add one:
+
+1. Create `backend/modes/your_mode.py`
+2. Inherit from `BaseMode` and implement three methods:
+
+```python
+from modes.base_mode import BaseMode
+
+class YourMode(BaseMode):
+
+    @property
+    def name(self) -> str:
+        return "Your Mode"
+
+    def get_system_prompt(self) -> str:
+        return "You are ScholarOS. Your task is to..."
+
+    def run(self, user_input, source_id=None, top_k=5) -> str:
+        context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
+        prompt = self.llm_client.build_rag_prompt(
+            system_prompt=self.get_system_prompt(),
+            context_chunks=context_chunks,
+            user_question=user_input,
+        )
+        return self.llm_client.generate(prompt=prompt)
 ```
 
-To switch to the fallback model on a low-RAM device:
+3. Register it in `backend/modes/__init__.py`
+4. Add an endpoint in `backend/api/main.py`
+5. Add a tab in `frontend/src/App.jsx`
 
-```
-MODEL_NAME=qwen2.5-1.5b
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full walkthrough.
 
 ---
 
@@ -293,12 +361,12 @@ MODEL_NAME=qwen2.5-1.5b
 
 | Version | Status | Key Features |
 |---|---|---|
-| v1.0.0 | ✅ Current | Q&A Mode, Flashcard Mode, local RAG via llama-cpp-python + ChromaDB, full docs |
-| v1.1.0 | 🔨 In Progress | Subject Pack ecosystem, advanced PDF parsing (tables + images), MCQ generator |
+| v1.0.0 | ✅ Current | Q&A (streaming + multi-turn), Flashcards, Summary, React + Vite frontend, unified launcher |
+| v1.1.0 | 🔨 In Progress | MCQ generator, subject packs, advanced PDF parsing (tables + images) |
 | v1.2.0 | 📋 Planned | Socratic debate mode, timeline builder, progress dashboard, multi-file sessions |
-| v2.0.0 | 🌱 Vision | Mobile ports via llama.cpp Android bindings, voice I/O, multi-language packs |
+| v2.0.0 | 🌱 Vision | Mobile ports via llama.cpp Android bindings, voice I/O, multi-language support |
 
-Track all planned work on the [GitHub Issues board](https://github.com/CricketFan18/ScholarOS/issues).  
+Track planned work on the [GitHub Issues board](https://github.com/CricketFan18/ScholarOS/issues).  
 Issues labelled [`good first issue`](https://github.com/CricketFan18/ScholarOS/issues?q=label%3A%22good+first+issue%22) are ideal starting points for new contributors.
 
 ---
@@ -310,9 +378,9 @@ We welcome community contributions.
 To contribute:
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feat/your-feature`)
 3. Make your changes and write tests
-4. Ensure all tests pass: `pytest tests/ -v`
+4. Ensure all tests pass: `make test`
 5. Open a pull request targeting `main`
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide, branch naming conventions, commit format, and the step-by-step guide to adding a new study mode.
@@ -327,7 +395,7 @@ It is enterprise-friendly, patent-safe, and free to use for any purpose.
 See [LICENSE](LICENSE) for details.
 
 ```
-Copyright (c) 2025 Samira Khan & Vivek Kesarwani
+Copyright (c) 2026 Samira Khan & Vivek Kesarwani
 ```
 
 ---
@@ -338,21 +406,23 @@ Copyright (c) 2025 Samira Khan & Vivek Kesarwani
 
 | Name | Role |
 |---|---|
-| Samira Khan | Core architecture, RAG pipeline, modes system |
-| Vivek Kesarwani | UI development, documentation, testing |
+| Samira Khan | UI development, documentation, testing |
+| Vivek Kesarwani | Core architecture, RAG pipeline, modes system |
 
-KIIT University — Open Source Forge 2025
+KIIT University — Open Source Forge 2026
 
 ### Libraries and tools
 
-This project builds upon the following open-source work:
-
-- [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) — in-process LLM inference via llama.cpp bindings
-- [ChromaDB](https://trychroma.com) — embedded vector store
-- [sentence-transformers](https://sbert.net) — local embedding models
-- [PyMuPDF](https://pymupdf.readthedocs.io) — PDF text extraction
-- [FastAPI](https://fastapi.tiangolo.com) — lightweight async web framework
-- [HuggingFace Hub](https://huggingface.co) — model hosting for reproducible GGUF downloads
+| Library | Purpose |
+|---|---|
+| [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) | In-process LLM inference |
+| [ChromaDB](https://trychroma.com) | Embedded local vector store |
+| [sentence-transformers](https://sbert.net) | Local embedding model |
+| [PyMuPDF](https://pymupdf.readthedocs.io) | PDF text extraction |
+| [FastAPI](https://fastapi.tiangolo.com) | Async backend framework |
+| [Vite](https://vitejs.dev) + [React](https://react.dev) | Frontend build tooling |
+| [Tailwind CSS](https://tailwindcss.com) | Utility-first styling |
+| [HuggingFace Hub](https://huggingface.co) | Model hosting |
 
 We thank all contributors and the open-source community that made this possible.
 
