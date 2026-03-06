@@ -2,7 +2,6 @@
 
 ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![Build](https://github.com/CricketFan18/ScholarOS/actions/workflows/ci.yml/badge.svg)
 ![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen)
 ![Status](https://img.shields.io/badge/status-active-success)
 
@@ -74,7 +73,7 @@ Designed to run on:
 ### Modular Contribution System
 
 Every study mode is a standalone plugin.  
-Add a new mode by creating one file in `modes/` — no core knowledge required.  
+Add a new mode by creating one file in `modes/` — implement `name`, `get_system_prompt()`, and `run()`. No core knowledge required.  
 This is the 15-minute contribution entry point.
 
 ### Open Source
@@ -139,9 +138,11 @@ Web Interface (FastAPI + Vanilla HTML/CSS/JS)
 
 Main components:
 
-- `core/ingestion.py` — PDF parsing with 50-token overlap for academic multi-column layouts
-- `core/vector_store.py` — ChromaDB embedded interface
-- `core/llm_client.py` — llama-cpp-python inference wrapper
+- `core/ingestion.py` — PDF parsing with 50-token overlap. Public API: `ingest_pdf()`, `extract_text_from_pdf()`, `chunk_text()`
+- `core/vector_store.py` — ChromaDB embedded interface. Public class: `VectorStore`
+- `core/llm_client.py` — llama-cpp-python wrapper. Exposes `build_rag_prompt()`, `generate()`, `generate_stream()`
+- `core/__init__.py` — single import surface: `from core import ingest_pdf, VectorStore, LLMClient`
+- `modes/base_mode.py` — abstract base. Implement `name`, `get_system_prompt()`, and `run()` to add a new mode
 - `modes/` — contribution zone, one file per study mode
 - `ui/server.py` — FastAPI router, no business logic
 - `ui/web/` — decoupled frontend (index.html, style.css, app.js)
@@ -230,9 +231,10 @@ upload path/to/slides/*.pdf
 ```
 scholaros/
     core/
-        ingestion.py        PDF parser, 50-token overlap chunking
-        vector_store.py     ChromaDB embedded interface
-        llm_client.py       llama-cpp-python inference wrapper
+        ingestion.py        PDF parser — ingest_pdf(), extract_text_from_pdf(), chunk_text()
+        vector_store.py     ChromaDB embedded interface — VectorStore
+        llm_client.py       llama-cpp-python wrapper — build_rag_prompt(), generate(), generate_stream()
+        __init__.py         Public API surface — from core import ingest_pdf, VectorStore, LLMClient
     modes/
         base_mode.py        Abstract base class all modes inherit
         qa_mode.py          Q&A study mode
