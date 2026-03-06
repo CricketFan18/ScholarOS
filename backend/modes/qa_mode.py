@@ -1,11 +1,28 @@
 """
 modes/qa_mode.py
 ----------------
-Standard Question & Answer mode using Retrieval-Augmented Generation.
+Question & Answer mode using Retrieval-Augmented Generation (RAG).
 
-The LLM is strictly grounded in the retrieved document context —
-it will not answer from general knowledge, preventing hallucination
-on domain-specific academic material.
+The LLM is strictly grounded in the retrieved document context — it will
+not answer from general training knowledge, which prevents hallucination on
+domain-specific academic material.
+
+Multi-turn conversation is supported via the `history` parameter: prior
+turns are injected into the prompt so the model can resolve follow-up
+questions like "explain that in simpler terms" correctly.
+
+Usage:
+
+    mode = QAMode(vector_store, llm_client)
+
+    # Blocking (for summaries and non-streaming endpoints)
+    answer = mode.run("What is the central argument of Chapter 3?",
+                      source_id="lecture_01")
+
+    # Streaming (for the Q&A chat interface)
+    for token in mode.run_stream("Explain gradient descent.",
+                                 source_id="lecture_01"):
+        print(token, end="", flush=True)
 """
 
 from __future__ import annotations
@@ -17,19 +34,10 @@ from modes.base_mode import BaseMode
 
 class QAMode(BaseMode):
     """
-    Answers student questions using only the content of the ingested PDF.
+    Answers student questions using only the content of the ingested PDFs.
 
-    Usage::
-
-        mode = QAMode(vector_store, llm_client)
-
-        # Blocking
-        answer = mode.run("What is the central argument of Chapter 3?",
-                          source_id="lecture_01")
-
-        # Streaming (token by token, for the UI)
-        for token in mode.run_stream("Explain gradient descent.", source_id="lecture_01"):
-            print(token, end="", flush=True)
+    Both `run()` and `run_stream()` perform retrieval independently so the
+    vector store is queried exactly once per user turn in both code paths.
     """
 
     @property
@@ -51,12 +59,24 @@ class QAMode(BaseMode):
         user_input: str,
         source_id: Optional[str] = None,
         top_k: int = 5,
+        history: Optional[list[dict]] = None,
     ) -> str:
         """
-        Retrieve context and return a complete answer string.
+        Retrieve context and return a complete answer as a string.
 
-        Returns a plain-language error message (not an exception) if no
-        relevant content is found, so the UI can display it gracefully.
+        Catches retrieval errors and returns them as plain-language messages
+        rather than raising, so the API layer can always return a 200 with
+        readable content (the frontend handles the empty-context case in-line).
+
+        Args:
+            user_input: The student's question.
+            source_id:  If provided, restrict retrieval to this document.
+            top_k:      Number of context chunks to retrieve.
+            history:    Prior conversation turns [{role, content}], most recent last.
+
+        Returns:
+            The model's answer, or a user-friendly error string if no context
+            was found.
         """
         try:
             context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
@@ -67,6 +87,7 @@ class QAMode(BaseMode):
             system_prompt=self.get_system_prompt(),
             context_chunks=context_chunks,
             user_question=user_input,
+            history=history or [],
         )
 
         return self.llm_client.generate(prompt=prompt)
@@ -76,19 +97,28 @@ class QAMode(BaseMode):
         user_input: str,
         source_id: Optional[str] = None,
         top_k: int = 5,
+        history: Optional[list[dict]] = None,
     ) -> Iterator[str]:
         """
         Retrieve context once, then stream the answer token-by-token.
 
-        Retrieval is performed here (not delegated to run()) so that
-        the vector store is only queried once per user turn, regardless
-        of whether blocking or streaming mode is used.
+        Retrieval is performed here rather than delegating to `run()` so
+        that the vector store is queried exactly once. If retrieval fails,
+        a single error-string token is yielded and the generator exits —
+        the SSE layer will still send "[DONE]" to close the stream cleanly.
+
+        Args:
+            user_input: The student's question.
+            source_id:  If provided, restrict retrieval to this document.
+            top_k:      Number of context chunks to retrieve.
+            history:    Prior conversation turns [{role, content}], most recent last.
+
+        Yields:
+            Text tokens as strings.
         """
         try:
             context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
         except ValueError as exc:
-            # Yield the error as a single token so the stream doesn't
-            # hang silently — the UI will display it like any other response.
             yield str(exc)
             return
 
@@ -96,6 +126,7 @@ class QAMode(BaseMode):
             system_prompt=self.get_system_prompt(),
             context_chunks=context_chunks,
             user_question=user_input,
+            history=history or [],
         )
 
         yield from self.llm_client.generate_stream(prompt=prompt)

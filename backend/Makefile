@@ -1,23 +1,31 @@
-.PHONY: help install fetch-model fetch-model-fallback run test lint clean clean-all
+.PHONY: help install fetch-model fetch-model-fallback run test test-coverage lint lint-check clean clean-all
+
+# ── Shell ──────────────────────────────────────────────────────────────────
+# Explicitly use bash so that read -p and pipefail work correctly.
+# Without this, /bin/sh (dash on Ubuntu) is used, which lacks read -p.
+
+SHELL       := bash
+.SHELLFLAGS := -eu -o pipefail -c
 
 # ── Variables ──────────────────────────────────────────────────────────────
 
-VENV        := venv
-PYTHON      := $(VENV)/bin/python
-PIP         := $(VENV)/bin/pip
-PORT        := 8000
+VENV   := venv
+PORT   := 8000
 
-# Detect Windows (nmake / git-bash)
+# Platform-aware Python / pip paths
 ifeq ($(OS),Windows_NT)
-  PYTHON  := $(VENV)/Scripts/python
-  PIP     := $(VENV)/Scripts/pip
+  PYTHON := $(VENV)/Scripts/python
+  PIP    := $(VENV)/Scripts/pip
+else
+  PYTHON := $(VENV)/bin/python
+  PIP    := $(VENV)/bin/pip
 endif
 
 # ── Help (default target) ──────────────────────────────────────────────────
 
 help:          ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -39,19 +47,19 @@ install: $(VENV)/bin/activate  ## Create venv and install all dependencies
 
 # ── Model download ─────────────────────────────────────────────────────────
 
-fetch-model:   ## Download default model: Phi-3 Mini (~2.3 GB)
+fetch-model:          ## Download default model: Phi-3 Mini (~2.3 GB)
 	@echo "→ Downloading Phi-3 Mini weights (~2.3 GB)..."
 	$(PYTHON) scripts/download_model.py --model default
 	@echo "✓ Model ready in ./models/"
 
-fetch-model-fallback:  ## Download fallback model: Qwen2.5 1.5B (~1.0 GB, for 4 GB RAM machines)
-	@echo "→ Downloading Qwen2.5 1.5B fallback weights (~1.0 GB)..."
+fetch-model-fallback: ## Download fallback model: Qwen2.5 1.5B (~1.0 GB, for 4 GB RAM)
+	@echo "→ Downloading Qwen2.5 1.5B weights (~1.0 GB)..."
 	$(PYTHON) scripts/download_model.py --model fallback
 	@echo "✓ Fallback model ready in ./models/"
 
 # ── Run ────────────────────────────────────────────────────────────────────
 
-run: _check-model ## Start the ScholarOS FastAPI server (auto-reloads on code changes)
+run: _check-model  ## Start the ScholarOS FastAPI server (auto-reloads on change)
 	@echo "→ Starting ScholarOS on http://localhost:$(PORT) ..."
 	$(PYTHON) -m uvicorn api.main:app --host 0.0.0.0 --port $(PORT) --reload
 
@@ -71,7 +79,7 @@ test:          ## Run the full test suite with verbose output
 	$(PYTHON) -m pytest tests/ -v --tb=short
 
 test-coverage: ## Run tests and generate an HTML coverage report
-	$(PYTHON) -m pytest tests/ --cov=core --cov=modes --cov-report=html
+	$(PYTHON) -m pytest tests/ --cov=core --cov=modes --cov=api --cov-report=html
 	@echo "✓ Coverage report written to htmlcov/index.html"
 
 # ── Code quality ───────────────────────────────────────────────────────────
@@ -80,7 +88,7 @@ lint:          ## Format code with black and sort imports with isort
 	$(PYTHON) -m black core/ modes/ api/ tests/
 	$(PYTHON) -m isort core/ modes/ api/ tests/
 
-lint-check:    ## Check formatting without making changes (useful in CI)
+lint-check:    ## Check formatting without making changes (CI)
 	$(PYTHON) -m black --check core/ modes/ api/ tests/
 	$(PYTHON) -m isort --check-only core/ modes/ api/ tests/
 
@@ -93,9 +101,9 @@ clean:         ## Remove venv, ChromaDB data, and Python caches
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "✓ Environment and local database cleaned."
 
-clean-all: clean  ## clean + remove downloaded model weights and .env
-	@echo "→ This will delete model weights and your .env file."
-	@read -p "   Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
+clean-all: clean  ## clean + remove model weights and .env (asks for confirmation)
+	@echo "→ This will permanently delete model weights and your .env file."
+	@read -p "   Are you sure? [y/N] " confirm && [ "$${confirm}" = "y" ]
 	rm -rf models/*.gguf
 	rm -f .env
 	@echo "✓ Full clean complete."

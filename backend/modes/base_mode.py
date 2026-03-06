@@ -1,17 +1,19 @@
 """
 modes/base_mode.py
 ------------------
-The abstract interface for all ScholarOS study modes.
+Abstract base class for all ScholarOS study mode plugins.
 
-To create a new study tool (e.g., Timeline Builder, MCQs), simply:
+Study modes are the core user-facing features of ScholarOS (Q&A, Flashcards,
+Summaries, etc.). Each mode shares the same RAG plumbing but has its own
+system prompt, output format, and (optionally) streaming behaviour.
 
-    1. Create  modes/your_mode.py
-    2. Inherit from BaseMode
-    3. Implement get_system_prompt() and run()
-    4. Optionally override run_stream() for token-by-token streaming
-
-You do NOT need to touch core/, vector_store, or llm_client directly.
-The _retrieve() helper handles all RAG plumbing for you.
+Adding a new mode:
+  1. Create  modes/your_mode.py
+  2. Subclass BaseMode
+  3. Implement get_system_prompt() → str
+  4. Implement run() → str
+  5. Optionally override run_stream() for true token-level streaming
+  6. Register the class in modes/__init__.py
 """
 
 from __future__ import annotations
@@ -19,25 +21,29 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Iterator, Optional
 
-from core.vector_store import VectorStore
 from core.llm_client import LLMClient
+from core.vector_store import VectorStore
 
 
 class BaseMode(ABC):
     """
     Foundation for all ScholarOS study mode plugins.
 
-    Subclasses must implement:
-      - get_system_prompt() → str
-      - run()               → str
+    Provides:
+    - Shared constructor (VectorStore + LLMClient injection).
+    - `_retrieve()`: RAG helper that queries the vector store and enforces the
+      "no context → no generation" rule that prevents hallucination.
+    - A default `run_stream()` that wraps `run()`, so subclasses only need to
+      override it if they want true token-level streaming.
 
-    Subclasses may optionally override:
-      - run_stream()        → Iterator[str]   (default: wraps run())
+    Subclasses **must** implement:
+      - `get_system_prompt()` → str
+      - `run()` → str
     """
 
     def __init__(self, vector_store: VectorStore, llm_client: LLMClient) -> None:
         self.vector_store = vector_store
-        self.llm_client = llm_client
+        self.llm_client   = llm_client
 
     # ------------------------------------------------------------------
     # Identity
@@ -45,26 +51,23 @@ class BaseMode(ABC):
 
     @property
     def name(self) -> str:
-        """
-        Human-readable mode name used in logs and API responses.
-        Defaults to the class name; override in subclasses if desired.
-
-        Example: QAMode → "QAMode"
-        """
+        """Human-readable mode name. Defaults to the class name."""
         return self.__class__.__name__
 
     def __repr__(self) -> str:
         return f"<ScholarOS mode: {self.name}>"
 
     # ------------------------------------------------------------------
-    # Abstract interface — subclasses must implement these two
+    # Abstract interface
     # ------------------------------------------------------------------
 
     @abstractmethod
     def get_system_prompt(self) -> str:
         """
-        Define the persona and task instructions for this mode.
-        This string is injected as the system turn in every prompt.
+        Return the system prompt for this mode.
+
+        The prompt defines the model's persona, constraints, and output
+        format. It is injected into the <|system|> block of every request.
         """
 
     @abstractmethod
@@ -77,18 +80,23 @@ class BaseMode(ABC):
         """
         Execute the mode and return the complete response as a string.
 
+        This is the blocking (non-streaming) interface. Implement this even
+        if the mode is primarily used via run_stream(), because the default
+        run_stream() delegates to run().
+
         Args:
-            user_input: The student's query or topic.
-            source_id:  If provided, restrict retrieval to one document.
+            user_input: The student's question or topic prompt.
+            source_id:  If provided, restrict retrieval to this document.
             top_k:      Number of context chunks to retrieve.
 
         Returns:
-            The full generated response string.
+            The full response string, or a user-friendly error message if
+            retrieval fails (do not raise from here — the API layer expects
+            a string, not an exception).
         """
 
     # ------------------------------------------------------------------
-    # Streaming — default implementation wraps run()
-    # Override this if the mode benefits from true token-level streaming.
+    # Streaming — default wraps run()
     # ------------------------------------------------------------------
 
     def run_stream(
@@ -100,22 +108,22 @@ class BaseMode(ABC):
         """
         Execute the mode and yield the response token-by-token.
 
-        The default implementation calls run() and yields the entire
-        response as a single chunk. Modes that need true streaming
-        (e.g., QAMode) should override this method.
+        The default implementation yields the result of `run()` as a single
+        chunk. Override this in subclasses that can produce tokens
+        incrementally (e.g. QAMode, which calls `llm_client.generate_stream`).
 
         Args:
-            user_input: The student's query or topic.
-            source_id:  If provided, restrict retrieval to one document.
+            user_input: The student's question or topic prompt.
+            source_id:  If provided, restrict retrieval to this document.
             top_k:      Number of context chunks to retrieve.
 
         Yields:
-            String tokens/chunks of the response.
+            Text tokens (strings) as they become available.
         """
         yield self.run(user_input, source_id=source_id, top_k=top_k)
 
     # ------------------------------------------------------------------
-    # Protected helper — shared RAG plumbing for all subclasses
+    # Protected helper — shared RAG plumbing
     # ------------------------------------------------------------------
 
     def _retrieve(
@@ -125,27 +133,27 @@ class BaseMode(ABC):
         top_k: int = 5,
     ) -> tuple[list[str], list[dict]]:
         """
-        Query the vector store and return context chunks + raw results.
+        Query the vector store and return retrieved context.
 
-        This is the single place where retrieval happens. All subclasses
-        call this instead of touching vector_store directly, which means
-        retrieval logic (reranking, filtering, etc.) only needs to change
-        here to affect every mode.
+        This is the "hallucination firewall": if no relevant chunks are found,
+        we raise rather than passing empty context to the LLM. Sending an empty
+        context block would allow the model to answer from its general training
+        knowledge, which is undesirable for a document-grounded study tool.
 
         Args:
-            query:     The search query (usually the user's question).
-            source_id: Optional document filter.
-            top_k:     Number of results to retrieve.
+            query:     The search query (usually the student's question).
+            source_id: If provided, restrict search to this document.
+            top_k:     Number of chunks to retrieve.
 
         Returns:
             A tuple of:
-              - context_chunks: list[str]  — plain text, ready for prompting
-              - raw_results:    list[dict] — full result dicts with metadata
+              - context_chunks: List of raw text strings for prompt assembly.
+              - raw_results:    Full result dicts from VectorStore.query(),
+                                including metadata and distances.
 
         Raises:
-            ValueError: If no chunks are found (empty DB or wrong source_id),
-                        so callers can return a clean error instead of
-                        sending an empty context to the LLM.
+            ValueError: If the vector store returns no results. Callers should
+                        catch this and return a friendly error string to the user.
         """
         raw_results = self.vector_store.query(
             query_text=query,

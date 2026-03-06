@@ -1,5 +1,51 @@
+/**
+ * index.css
+ *
+ * Global styles and Tailwind utility extensions.
+ * Keep additions here minimal — prefer Tailwind classes in components.
+ */
+
 @import "tailwindcss";
 
+/* Enables the `prose` utility classes used by MarkdownRenderer. */
+@plugin "@tailwindcss/typography";
+
 body {
-  background-color: #f8fafc; /* slate-50 */
+  background-color: #f8fafc; /* slate-50 — matches the app shell background */
+}
+
+/**
+ * 3-D flip-card utilities
+ *
+ * Tailwind's JIT compiler doesn't ship these CSS properties as classes, so we
+ * define them here. They're used exclusively by FlashcardMode's card grid.
+ *
+ * How a flip card works:
+ *   1. `.perspective` on the outer wrapper establishes the vanishing point so
+ *      child elements appear to recede in 3-D space.
+ *   2. `.preserve-3d` on the card wrapper places its two children (front/back)
+ *      in the same 3-D rendering context, allowing them to face opposite directions.
+ *   3. `.backface-hidden` on each face hides it when it's rotated past 90°,
+ *      preventing both faces from showing through each other.
+ *   4. `.my-rotate-y-180` pre-rotates the back face 180° so it starts hidden.
+ *      The same class is applied to the wrapper on hover (via `group-hover:`)
+ *      which spins the whole card, bringing the back face into view.
+ */
+@layer utilities {
+  .perspective {
+    perspective: 1000px;
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    -webkit-backface-visibility: hidden; /* Safari */
+    backface-visibility: hidden;
+  }
+
+  .my-rotate-y-180 {
+    transform: rotateY(180deg);
+  }
 }

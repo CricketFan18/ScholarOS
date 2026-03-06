@@ -4,8 +4,6 @@ scripts/download_model.py
 --------------------------
 Downloads GGUF model weights from HuggingFace into the local /models directory.
 
-Uses huggingface-hub for reliable resumable downloads with progress display.
-
 Usage
 -----
     python scripts/download_model.py                    # Phi-3 Mini (default)
@@ -27,7 +25,7 @@ except ImportError:
     print(
         "\n[ERROR] huggingface-hub is not installed.\n"
         "  Run:  pip install huggingface-hub\n"
-        "  Or:   pip install -e '.[dev]'  (installs all dependencies)\n",
+        "  Or:   pip install -e '.[dev]'\n",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -41,19 +39,19 @@ MODELS: dict[str, dict] = {
     "default": {
         "repo_id":     "microsoft/Phi-3-mini-4k-instruct-gguf",
         "filename":    "Phi-3-mini-4k-instruct-q4.gguf",
-        "description": "Phi-3 Mini 3.8B (Q4, ~2.3 GB) -- recommended default",
+        "description": "Phi-3 Mini 3.8B (Q4, ~2.3 GB) — recommended default",
         "min_ram_gb":  4,
     },
     "fallback": {
         "repo_id":     "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
         "filename":    "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        "description": "Qwen2.5 1.5B (Q4_K_M, ~1.0 GB) -- for 4 GB RAM machines",
+        "description": "Qwen2.5 1.5B (Q4_K_M, ~1.0 GB) — for 4 GB RAM machines",
         "min_ram_gb":  2,
     },
     "gemma": {
         "repo_id":     "bartowski/gemma-2-2b-it-GGUF",
         "filename":    "gemma-2-2b-it-Q4_K_M.gguf",
-        "description": "Gemma 2 2B (Q4_K_M, ~1.2 GB) -- alternative fallback",
+        "description": "Gemma 2 2B (Q4_K_M, ~1.2 GB) — alternative fallback",
         "min_ram_gb":  3,
     },
 }
@@ -67,8 +65,7 @@ MODELS_DIR = Path(os.getenv("SCHOLAROS_MODELS_DIR", "models"))
 
 def download_model(model_key: str = "default") -> Path:
     if model_key not in MODELS:
-        valid = ", ".join(MODELS.keys())
-        raise ValueError(f"Unknown model '{model_key}'. Choose from: {valid}")
+        raise ValueError(f"Unknown model '{model_key}'. Choose from: {', '.join(MODELS)}")
 
     spec = MODELS[model_key]
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,14 +84,13 @@ def download_model(model_key: str = "default") -> Path:
     print()
 
     try:
-        # NOTE: local_dir_use_symlinks removed in huggingface-hub >= 0.23.0 -- do NOT pass it.
         hf_hub_download(
             repo_id=spec["repo_id"],
             filename=spec["filename"],
             local_dir=str(MODELS_DIR),
         )
     except KeyboardInterrupt:
-        print("\n[CANCELLED] Download interrupted. Partial file kept for resumption.")
+        print("\n[CANCELLED] Partial file kept for resumption.")
         sys.exit(1)
     except Exception as exc:
         print(f"\n[ERROR] Download failed: {exc}", file=sys.stderr)
@@ -128,7 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="default",
         choices=list(MODELS.keys()),
         metavar="MODEL",
-        help="Which model to download (default: %(default)s). Choices: " + ", ".join(MODELS.keys()),
+        help="Which model to download (default: %(default)s). Choices: " + ", ".join(MODELS),
     )
     parser.add_argument(
         "--list",
@@ -139,19 +135,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args()
+    args = _build_parser().parse_args()
 
     if args.list:
         print("\nAvailable models:\n")
         for key, spec in MODELS.items():
             path = MODELS_DIR / spec["filename"]
             if path.exists():
-                size_mb = path.stat().st_size / 1_048_576
-                status = f"downloaded  ({size_mb:.1f} MB)"
+                status = f"downloaded  ({path.stat().st_size / 1_048_576:.1f} MB)"
             else:
                 status = "not downloaded"
-            print(f"  {key:10s}  {spec['description']:50s}  [{status}]")
+            print(f"  {key:10s}  {spec['description']:52s}  [{status}]")
         print()
         return
 

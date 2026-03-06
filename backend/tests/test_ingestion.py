@@ -1,57 +1,38 @@
 """
 tests/test_ingestion.py
------------------------
-Tests for core/ingestion.py — the PDF parsing and chunking pipeline.
 
-Because _clean_whitespace and chunk_text are pure functions (no I/O,
-no side effects), they can be tested directly and exhaustively without
-any mocking. The pdf_factory fixture from conftest.py handles the one
-test that needs a real file on disk.
-
-Test philosophy
----------------
-Each test targets a single, named behaviour. When a test fails the name
-alone tells you exactly what broke — "whitespace normalisation lost paragraph
-breaks" is a useful failure message; "test_chunk_text failed" is not.
+Unit tests for core/ingestion.py — the PDF parsing and chunking pipeline.
+Tests are organised by function so failures pinpoint exactly which step broke.
 """
 
 from __future__ import annotations
 
 import pytest
 
-# Import the module under test — these are pure functions, safe to import
-# anywhere without triggering heavy dependencies.
 from core.ingestion import (
+    CHARS_PER_TOKEN,
+    CHUNK_SIZE,
+    OVERLAP_TOKENS,
     _clean_whitespace,
     _find_sentence_boundary,
     chunk_text,
     ingest_pdf,
-    CHUNK_SIZE,
-    OVERLAP_TOKENS,
-    CHARS_PER_TOKEN,
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# _clean_whitespace
-# ═══════════════════════════════════════════════════════════════════════════
-
 class TestCleanWhitespace:
-    """Unit tests for the internal _clean_whitespace helper."""
 
-    def test_collapses_multiple_spaces_to_one(self):
+    def test_collapses_multiple_spaces(self):
         assert _clean_whitespace("hello   world") == "hello world"
 
-    def test_collapses_tabs_to_single_space(self):
+    def test_collapses_tabs(self):
         assert _clean_whitespace("col1\t\tcol2") == "col1 col2"
 
-    def test_strips_leading_and_trailing_whitespace(self):
+    def test_strips_leading_trailing(self):
         assert _clean_whitespace("  hello world  ") == "hello world"
 
-    def test_preserves_double_newline_paragraph_boundary(self):
-        text = "First paragraph.\n\nSecond paragraph."
-        result = _clean_whitespace(text)
-        assert "\n\n" in result, "Paragraph break must be preserved"
+    def test_preserves_paragraph_break(self):
+        assert "\n\n" in _clean_whitespace("First paragraph.\n\nSecond paragraph.")
 
     def test_collapses_triple_newline_to_double(self):
         result = _clean_whitespace("para one.\n\n\npara two.")
@@ -59,237 +40,134 @@ class TestCleanWhitespace:
         assert "\n\n" in result
 
     def test_removes_trailing_space_before_newline(self):
-        # "word \n" → "word\n"
-        result = _clean_whitespace("word \nmore")
-        assert " \n" not in result
+        assert " \n" not in _clean_whitespace("word \nmore")
 
-    def test_empty_string_returns_empty(self):
+    def test_empty_string(self):
         assert _clean_whitespace("") == ""
 
-    def test_only_whitespace_returns_empty(self):
+    def test_whitespace_only(self):
         assert _clean_whitespace("   \t\n  ") == ""
 
-    def test_single_line_unchanged(self):
+    def test_single_clean_line_unchanged(self):
         line = "This is a normal sentence."
         assert _clean_whitespace(line) == line
 
-    def test_mixed_whitespace_normalised(self):
-        # Tabs + multiple spaces combined
-        result = _clean_whitespace("word\t  \t  word")
-        assert result == "word word"
+    def test_mixed_whitespace(self):
+        assert _clean_whitespace("word\t  \t  word") == "word word"
 
-    def test_multi_column_academic_text_normalised(self):
-        """
-        Academic PDFs extracted with PyMuPDF often contain runs of spaces
-        where columns were separated. These must collapse to a single space.
-        """
-        text = "Abstract     The paper presents     a novel approach"
-        result = _clean_whitespace(text)
-        assert "  " not in result   # no double spaces remain
+    def test_multi_column_wide_spaces_collapsed(self):
+        # PDFs often use runs of spaces to simulate column gaps.
+        assert "  " not in _clean_whitespace("Abstract     The paper presents     a novel approach")
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# _find_sentence_boundary
-# ═══════════════════════════════════════════════════════════════════════════
 
 class TestFindSentenceBoundary:
-    """Unit tests for the sentence-boundary detection helper."""
 
     def test_finds_period_followed_by_space(self):
-        text = "First sentence. Second sentence."
-        # pos=16 lands after "First sentence. ", window=20
+        text   = "First sentence. Second sentence."
         result = _find_sentence_boundary(text, pos=16, window=20)
         assert result is not None
-        # The returned position should be after the period+space
         assert text[result - 1] == " "
 
     def test_finds_exclamation_mark(self):
-        text = "Warning! This is important."
-        result = _find_sentence_boundary(text, pos=len(text), window=len(text))
-        assert result is not None
+        assert _find_sentence_boundary("Warning! Next.", pos=14, window=14) is not None
 
     def test_finds_question_mark(self):
-        text = "Is this correct? Yes it is."
+        assert _find_sentence_boundary("Is this right? Yes.", pos=19, window=19) is not None
+
+    def test_returns_none_when_no_boundary(self):
+        assert _find_sentence_boundary("word " * 20, pos=100, window=10) is None
+
+    def test_boundary_outside_window_is_ignored(self):
+        # The sentence end is far left of pos; the window is too small to reach it.
+        text   = "A sentence. " + "x " * 100
+        assert _find_sentence_boundary(text, pos=len(text), window=5) is None
+
+    def test_returns_rightmost_boundary_when_multiple(self):
+        text   = "First. Second. Third."
         result = _find_sentence_boundary(text, pos=len(text), window=len(text))
-        assert result is not None
+        assert result is not None and result > text.index("Second")
 
-    def test_returns_none_when_no_boundary_in_window(self):
-        # No punctuation → no boundary
-        text = "word " * 20
-        result = _find_sentence_boundary(text, pos=len(text), window=10)
-        assert result is None
-
-    def test_boundary_within_window_only(self):
-        """Boundary outside the window must not be returned."""
-        text = "A sentence. " + "x " * 100
-        # pos at end, but window is tiny — boundary is far back
-        result = _find_sentence_boundary(text, pos=len(text), window=5)
-        assert result is None
-
-    def test_returns_last_boundary_when_multiple_present(self):
-        text = "First. Second. Third."
-        result = _find_sentence_boundary(text, pos=len(text), window=len(text))
-        assert result is not None
-        # Should find "Third." boundary — the *last* one
-        assert result > text.index("Second")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# chunk_text
-# ═══════════════════════════════════════════════════════════════════════════
 
 class TestChunkText:
-    """Tests for the overlapping chunking algorithm."""
 
-    # ── Basic structure ────────────────────────────────────────────────
-
-    def test_empty_string_returns_empty_list(self):
+    def test_empty_string_returns_empty(self):
         assert chunk_text("") == []
 
-    def test_whitespace_only_returns_empty_list(self):
+    def test_whitespace_only_returns_empty(self):
         assert chunk_text("   \n\t  ") == []
 
     def test_short_text_produces_single_chunk(self):
-        text = "This is a very short piece of text."
-        chunks = chunk_text(text)
-        assert len(chunks) == 1
+        assert len(chunk_text("This is a very short piece of text.")) == 1
 
-    def test_chunk_dict_has_required_keys(self):
-        chunks = chunk_text("Hello world. " * 10)
-        assert all("id" in c for c in chunks)
-        assert all("text" in c for c in chunks)
-        assert all("start_char" in c for c in chunks)
+    def test_chunk_has_required_keys(self):
+        for c in chunk_text("Hello world. " * 10):
+            assert {"id", "text", "start_char"} <= c.keys()
 
-    def test_chunk_ids_are_zero_based_sequential(self):
-        # Generate enough text for multiple chunks
-        text = "A sentence with enough words to trigger chunking. " * 200
-        chunks = chunk_text(text)
+    def test_ids_are_sequential(self):
+        chunks = chunk_text("A sentence. " * 200)
         assert [c["id"] for c in chunks] == list(range(len(chunks)))
 
-    def test_no_chunk_has_empty_text(self):
-        text = "Content. " * 200
-        chunks = chunk_text(text)
-        assert all(c["text"].strip() for c in chunks)
+    def test_no_empty_text_fields(self):
+        assert all(c["text"].strip() for c in chunk_text("Content. " * 200))
 
-    # ── Overlap ────────────────────────────────────────────────────────
+    def test_consecutive_chunks_share_words(self):
+        # Overlap means adjacent chunks share vocabulary.
+        chunks = chunk_text("word " * 800)
+        assert len(chunks) >= 2
+        assert set(chunks[0]["text"].split()) & set(chunks[1]["text"].split())
 
-    def test_consecutive_chunks_share_content_due_to_overlap(self):
-        """
-        With default overlap=50 tokens, consecutive chunks must share some
-        words. This is the core guarantee of the chunking algorithm.
-        """
-        text = "word " * 800   # well above CHUNK_SIZE
-        chunks = chunk_text(text)
-        assert len(chunks) >= 2, "Need at least two chunks to test overlap"
+    def test_overlap_is_smaller_than_chunk(self):
+        assert OVERLAP_TOKENS * CHARS_PER_TOKEN < CHUNK_SIZE * CHARS_PER_TOKEN
 
-        # The end of chunk[0] and start of chunk[1] should share text
-        words_0 = set(chunks[0]["text"].split())
-        words_1 = set(chunks[1]["text"].split())
-        assert words_0 & words_1, "Consecutive chunks must share overlapping tokens"
+    def test_first_start_char_is_zero(self):
+        assert chunk_text("Hello world sentence. " * 200)[0]["start_char"] == 0
 
-    def test_overlap_smaller_than_chunk_size(self):
-        """Step must always be positive — otherwise we loop forever."""
-        chunk_chars = CHUNK_SIZE * CHARS_PER_TOKEN
-        overlap_chars = OVERLAP_TOKENS * CHARS_PER_TOKEN
-        assert overlap_chars < chunk_chars, "Overlap must be less than chunk size"
-
-    # ── start_char ─────────────────────────────────────────────────────
-
-    def test_first_chunk_start_char_is_zero(self):
-        chunks = chunk_text("Hello world sentence. " * 200)
-        assert chunks[0]["start_char"] == 0
-
-    def test_start_char_increases_monotonically(self):
-        text = "Sentence number one. " * 200
-        chunks = chunk_text(text)
-        starts = [c["start_char"] for c in chunks]
+    def test_start_chars_monotonically_increase(self):
+        starts = [c["start_char"] for c in chunk_text("Sentence. " * 200)]
         assert starts == sorted(starts)
 
-    # ── Custom chunk size ──────────────────────────────────────────────
-
-    def test_smaller_chunk_size_produces_more_chunks(self):
+    def test_smaller_chunk_size_yields_more_chunks(self):
         text = "word " * 500
-        chunks_default = chunk_text(text)
-        chunks_small   = chunk_text(text, chunk_size=50, overlap=10)
-        assert len(chunks_small) > len(chunks_default)
+        assert len(chunk_text(text, chunk_size=50, overlap=10)) > len(chunk_text(text))
 
-    def test_chunk_text_content_covers_input(self):
-        """
-        Every word in the original text must appear in at least one chunk.
-        This ensures no content is silently dropped during splitting.
-        """
-        text = "alpha beta gamma delta epsilon zeta eta theta iota kappa. " * 50
-        chunks = chunk_text(text, chunk_size=20, overlap=5)
-        all_chunk_text = " ".join(c["text"] for c in chunks)
-        for word in ["alpha", "beta", "kappa"]:
-            assert word in all_chunk_text
+    def test_all_words_covered_across_chunks(self):
+        # Verifies content is not dropped at chunk boundaries.
+        text      = "alpha beta gamma delta epsilon. " * 50
+        all_text  = " ".join(c["text"] for c in chunk_text(text, chunk_size=20, overlap=5))
+        for word in ["alpha", "beta", "epsilon"]:
+            assert word in all_text
 
-    # ── Sentence boundary snapping ─────────────────────────────────────
+    def test_sentence_boundary_snapping(self):
+        sentences = [f"This is sentence number {i}." for i in range(200)]
+        chunks    = chunk_text(" ".join(sentences), chunk_size=50, overlap=10)
+        for chunk in chunks[:-1]:
+            assert chunk["text"].rstrip()[-1] in ".!?\"'"
 
-    def test_chunks_do_not_split_mid_sentence_when_possible(self):
-        """
-        When there is a sentence boundary near a chunk edge, the chunk
-        should end at that boundary, not in the middle of a word.
-        """
-        # Build text where sentence boundaries are obvious
-        sentences = ["This is sentence number %d." % i for i in range(200)]
-        text = " ".join(sentences)
-        chunks = chunk_text(text, chunk_size=50, overlap=10)
-        for chunk in chunks:
-            stripped = chunk["text"].rstrip()
-            # The last non-whitespace character should be sentence-ending punctuation
-            # OR the chunk is at the very end of the text (no boundary to find)
-            last_char = stripped[-1] if stripped else ""
-            assert last_char in ".!?\"'" or chunk == chunks[-1], (
-                f"Chunk ended mid-sentence: '...{stripped[-30:]}'"
-            )
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ingest_pdf  (integration — requires a real file on disk)
-# ═══════════════════════════════════════════════════════════════════════════
 
 class TestIngestPDF:
-    """
-    Integration tests that exercise the full ingest_pdf() pipeline.
-    Uses the pdf_factory fixture to create real (minimal) PDFs without
-    any pre-committed fixture files.
-    """
 
     def test_returns_list_of_dicts(self, pdf_factory):
-        path = pdf_factory("Hello. This is test content for ScholarOS. " * 5)
-        result = ingest_pdf(path)
-        assert isinstance(result, list)
-        assert all(isinstance(c, dict) for c in result)
+        assert all(
+            isinstance(c, dict)
+            for c in ingest_pdf(pdf_factory("Hello. Test content. " * 5))
+        )
 
-    def test_chunks_contain_source_text(self, pdf_factory):
-        path = pdf_factory("Quantum entanglement is a physical phenomenon. " * 10)
-        chunks = ingest_pdf(path)
-        all_text = " ".join(c["text"] for c in chunks)
-        assert "Quantum" in all_text
+    def test_chunks_contain_extracted_text(self, pdf_factory):
+        text = " ".join(ingest_pdf(pdf_factory("Quantum entanglement. " * 10)))
+        assert "Quantum" in text
 
-    def test_raises_file_not_found_for_missing_path(self, tmp_path):
-        missing = tmp_path / "does_not_exist.pdf"
+    def test_raises_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="PDF not found"):
-            ingest_pdf(missing)
+            ingest_pdf(tmp_path / "does_not_exist.pdf")
 
     def test_chunk_ids_start_at_zero(self, pdf_factory):
-        path = pdf_factory("Content. " * 20)
-        chunks = ingest_pdf(path)
+        chunks = ingest_pdf(pdf_factory("Content. " * 20))
         if chunks:
             assert chunks[0]["id"] == 0
 
-    def test_all_chunks_have_non_empty_text(self, pdf_factory):
-        path = pdf_factory("Real content sentence here. " * 30)
-        chunks = ingest_pdf(path)
-        assert all(c["text"].strip() for c in chunks)
+    def test_all_chunks_non_empty(self, pdf_factory):
+        assert all(c["text"].strip() for c in ingest_pdf(pdf_factory("Real content. " * 30)))
 
-    def test_path_traversal_filename_is_just_a_path(self, tmp_path):
-        """
-        ingest_pdf() must raise FileNotFoundError for a path that does not
-        exist — it must never silently traverse to a different location.
-        A path like '../../etc/passwd' simply won't exist in tmp_path.
-        """
-        traversal = tmp_path / "../../etc" / "passwd"
+    def test_path_traversal_raises_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):
-            ingest_pdf(traversal)
+            ingest_pdf(tmp_path / "../../etc/passwd")

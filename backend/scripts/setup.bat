@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 
-:: Ensure we are executing from the 'backend' directory, even if double-clicked
+:: Ensure we execute from the backend directory even if double-clicked
 cd /d "%~dp0\.."
 
 echo ============================================================
@@ -10,7 +10,7 @@ echo  ScholarOS - Windows Setup
 echo ============================================================
 echo.
 
-:: ── 1. Check Python is available ────────────────────────────────────────
+:: ── 1. Check Python ─────────────────────────────────────────────────────
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python not found on PATH.
@@ -21,6 +21,10 @@ if %errorlevel% neq 0 (
 
 for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set PY_VER=%%v
 echo [OK] Found Python %PY_VER%
+
+:: Extract major.minor for wheel selection (e.g. "3.11.2" -> "311")
+for /f "tokens=1,2 delims=." %%a in ("%PY_VER%") do set PY_TAG=cp%%a%%b
+echo [OK] Using wheel tag: %PY_TAG%
 echo.
 
 :: ── 2. Create virtual environment ───────────────────────────────────────
@@ -48,26 +52,29 @@ if %errorlevel% neq 0 (
 echo [OK] pip ready.
 echo.
 
-:: ── 4. Install llama-cpp-python (pre-compiled, no C++ compiler needed) ──
+:: ── 4. Install llama-cpp-python ──────────────────────────────────────────
+:: Build the wheel URL dynamically from the detected Python version tag so
+:: this works for Python 3.10, 3.11, and 3.12 without manual edits.
 echo [3/5] Installing llama-cpp-python (pre-compiled CPU wheel)...
-echo       This avoids the need for Visual Studio Build Tools.
+echo       Python tag detected: %PY_TAG%
 echo.
 
-set WHEEL_URL=https://github.com/abetlen/llama-cpp-python/releases/download/v0.2.75/llama_cpp_python-0.2.75-cp310-cp310-win_amd64.whl
+set LLAMA_VERSION=0.2.75
+set WHEEL_URL=https://github.com/abetlen/llama-cpp-python/releases/download/v%LLAMA_VERSION%/llama_cpp_python-%LLAMA_VERSION%-%PY_TAG%-%PY_TAG%-win_amd64.whl
 
 pip install "%WHEEL_URL%" --quiet
 if %errorlevel% neq 0 (
     echo.
-    echo [WARN] Pre-compiled wheel install failed.
-    echo        Falling back to source build. This requires Visual Studio Build Tools.
-    echo        Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-    echo        Select "Desktop development with C++" workload, then re-run this script.
+    echo [WARN] Pre-compiled wheel not found for %PY_TAG%.
+    echo        Falling back to source build — requires Visual Studio Build Tools.
+    echo        Download: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+    echo        Select "Desktop development with C++" and re-run this script.
     echo.
     echo        Attempting source build (this will take several minutes)...
     pip install llama-cpp-python
     if !errorlevel! neq 0 (
         echo [ERROR] llama-cpp-python installation failed.
-        echo         See https://github.com/abetlen/llama-cpp-python for manual instructions.
+        echo         See https://github.com/abetlen/llama-cpp-python for instructions.
         exit /b 1
     )
 )
@@ -79,7 +86,6 @@ echo [4/5] Installing ScholarOS core dependencies...
 pip install -e ".[dev]" --quiet
 if %errorlevel% neq 0 (
     echo [ERROR] Dependency installation failed.
-    echo         Check the error above and ensure you have a working internet connection.
     exit /b %errorlevel%
 )
 echo [OK] All dependencies installed.
@@ -92,25 +98,25 @@ if not exist .env (
         copy .env.example .env >nul
         echo [OK] Created .env from .env.example
     ) else (
-        echo [WARN] .env.example not found -- skipping .env creation.
+        echo [WARN] .env.example not found — skipping .env creation.
     )
 ) else (
-    echo [OK] .env already exists -- skipping.
+    echo [OK] .env already exists — skipping.
 )
 echo.
 
-:: ── 7. Download model (skip if already present) ──────────────────────────
+:: ── 7. Download model ────────────────────────────────────────────────────
 echo Checking for model weights...
 if exist models\*.gguf (
-    echo [OK] Model weights already present in .\models\ -- skipping download.
+    echo [OK] Model weights already present in .\models\ — skipping download.
 ) else (
     echo Downloading Phi-3 Mini weights (~2.3 GB). This may take a while...
     python scripts\download_model.py --model default
     if %errorlevel% neq 0 (
         echo.
         echo [ERROR] Model download failed.
-        echo         You can retry later with:  python scripts\download_model.py
-        echo         Or download a smaller model with:  python scripts\download_model.py --model fallback
+        echo         Retry with:  python scripts\download_model.py
+        echo         Smaller alt: python scripts\download_model.py --model fallback
         exit /b %errorlevel%
     )
 )
@@ -129,7 +135,7 @@ echo.
 echo    2. Start the server:
 echo       python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 echo.
-echo  If you have GNU make installed:
+echo  With GNU make:
 echo    make run
 echo.
 pause

@@ -1,15 +1,21 @@
 """
 modes/flashcard_mode.py
 -----------------------
-Extracts key concepts from document context and formats them as
-structured flashcards, returned as a parsed list of dicts.
+Generates Anki-style flashcards from retrieved document context.
 
-Output format::
+The primary entry point is `run_structured()`, which returns parsed
+{front, back} dicts ready for the frontend to render. The inherited
+`run()` and `run_stream()` return the same content as raw text, used
+as a fallback or for streaming previews.
 
-    [
-        {"front": "What is backpropagation?", "back": "An algorithm for..."},
-        ...
-    ]
+Output format from the LLM:
+
+    Q: What is backpropagation?
+    A: An algorithm that computes gradients via the chain rule.
+    [CARD_END]
+    Q: What controls the step size in gradient descent?
+    A: The learning rate.
+    [CARD_END]
 """
 
 from __future__ import annotations
@@ -19,26 +25,20 @@ from typing import Iterator, Optional
 
 from modes.base_mode import BaseMode
 
-
-# Separator that is extremely unlikely to appear in academic text.
-# Deliberately chosen over "---" which is common in papers and markdown.
+# Separator token used to delimit individual cards in the LLM's raw output.
+# Deliberately avoids "---" which is common in Markdown and academic PDFs,
+# and would cause false splits during parsing.
 _CARD_SEPARATOR = "[CARD_END]"
 
 
 class FlashcardMode(BaseMode):
     """
-    Generates Anki-style flashcards from retrieved document context.
+    Generates study flashcards from retrieved document context.
 
-    The primary entry point is run_structured(), which returns a parsed
-    list of {"front": ..., "back": ...} dicts. The inherited run() method
-    returns the same content as a raw string (used as a fallback).
-
-    Usage::
-
-        mode = FlashcardMode(vector_store, llm_client)
-        cards = mode.run_structured("key concepts in Chapter 4",
-                                    source_id="lecture_notes")
-        # [{"front": "Define entropy", "back": "A measure of disorder..."}]
+    Workflow:
+      1. Retrieve the most relevant chunks for the requested topic.
+      2. Prompt the LLM to extract key concepts and format them as Q&A pairs.
+      3. Parse the raw LLM output into structured {front, back} dicts.
     """
 
     @property
@@ -46,6 +46,12 @@ class FlashcardMode(BaseMode):
         return "Flashcards"
 
     def get_system_prompt(self) -> str:
+        """
+        Return the system prompt that instructs the LLM to produce flashcards.
+
+        The format is specified precisely and the model is told not to add
+        preamble or commentary, which would break the parser.
+        """
         return (
             "You are ScholarOS, an expert at creating study materials. "
             "Based on the provided context, extract the most important concepts "
@@ -70,20 +76,21 @@ class FlashcardMode(BaseMode):
         top_k: int = 8,
     ) -> list[dict]:
         """
-        Retrieve context, generate flashcards, and return parsed card dicts.
+        Generate flashcards and return them as a parsed list of dicts.
+
+        Unlike `run()`, which returns raw text, this method parses the LLM
+        output before returning, so callers receive ready-to-render card objects.
+
+        Returns an empty list (not an exception) when no context is found, so
+        the API can return `{"flashcards": [], "count": 0}` gracefully.
 
         Args:
-            user_input: Topic or query string used to retrieve context.
-            source_id:  Restrict retrieval to a specific document.
-            top_k:      Number of context chunks to retrieve. Higher values
-                        give the model more material to generate cards from.
+            user_input: Topic or question to focus the cards on.
+            source_id:  If provided, restrict retrieval to this document.
+            top_k:      Number of context chunks to retrieve.
 
         Returns:
-            List of dicts: [{"front": str, "back": str}, ...]
-            Returns an empty list if no relevant content was found.
-
-        Raises:
-            Nothing — errors are returned as an empty list with a logged warning.
+            List of {"front": str, "back": str} dicts.
         """
         try:
             context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
@@ -101,7 +108,7 @@ class FlashcardMode(BaseMode):
         return self._parse_cards(raw)
 
     # ------------------------------------------------------------------
-    # BaseMode interface (raw string versions)
+    # BaseMode interface — raw string versions
     # ------------------------------------------------------------------
 
     def run(
@@ -110,10 +117,7 @@ class FlashcardMode(BaseMode):
         source_id: Optional[str] = None,
         top_k: int = 8,
     ) -> str:
-        """
-        Return flashcards as a raw formatted string.
-        Prefer run_structured() when the caller needs a list of dicts.
-        """
+        """Return flashcard output as a raw formatted string (unparsed)."""
         try:
             context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
         except ValueError as exc:
@@ -135,8 +139,9 @@ class FlashcardMode(BaseMode):
     ) -> Iterator[str]:
         """
         Stream raw flashcard text token-by-token.
-        The caller is responsible for parsing the accumulated string
-        using parse_cards() once the stream is complete.
+
+        Note: The streamed output is unparsed. The frontend must either buffer
+        the full stream before parsing, or use `run_structured()` instead.
         """
         try:
             context_chunks, _ = self._retrieve(user_input, source_id=source_id, top_k=top_k)
@@ -153,29 +158,39 @@ class FlashcardMode(BaseMode):
         yield from self.llm_client.generate_stream(prompt=prompt)
 
     # ------------------------------------------------------------------
-    # Parser — public so the server/tests can call it independently
+    # Parser
     # ------------------------------------------------------------------
 
     @staticmethod
     def parse_cards(raw: str) -> list[dict]:
         """
-        Parse the LLM's raw output string into a list of card dicts.
+        Public alias for `_parse_cards`.
 
-        Handles minor LLM formatting deviations (extra whitespace,
-        lowercase q/a, missing separator on the final card).
-
-        Args:
-            raw: The full string returned by run().
-
-        Returns:
-            [{"front": str, "back": str}, ...]
-            Cards with empty front or back are silently dropped.
+        Exposed so tests and external callers (e.g. a CLI tool) can invoke
+        the parser independently without instantiating a full FlashcardMode.
         """
         return FlashcardMode._parse_cards(raw)
 
     @staticmethod
     def _parse_cards(raw: str) -> list[dict]:
-        # Split on the separator; be lenient about surrounding whitespace
+        """
+        Parse the LLM's raw output into a list of {front, back} card dicts.
+
+        Parsing strategy:
+          1. Split on `_CARD_SEPARATOR` to get one text block per card.
+          2. Within each block, use regex to extract the Q: and A: lines.
+          3. Skip malformed blocks (missing Q or A) silently.
+
+        The parser is intentionally lenient about whitespace and case so
+        that minor model formatting deviations don't silently drop cards.
+
+        Args:
+            raw: The complete string returned by `llm_client.generate()`.
+
+        Returns:
+            List of {"front": str, "back": str} dicts. Empty list if the
+            input contains no valid cards.
+        """
         blocks = re.split(
             rf"\s*{re.escape(_CARD_SEPARATOR)}\s*",
             raw.strip(),
@@ -188,13 +203,13 @@ class FlashcardMode(BaseMode):
             if not block:
                 continue
 
-            # Match "Q: ..." and "A: ..." lines, case-insensitive
+            # DOTALL allows the answer to span multiple lines.
+            # The lookahead `(?=\nA:|\Z)` stops the question match before the answer line.
             q_match = re.search(r"(?i)^Q:\s*(.+?)(?=\nA:|\Z)", block, re.DOTALL | re.MULTILINE)
-            a_match = re.search(r"(?i)^A:\s*(.+)", block, re.DOTALL | re.MULTILINE)
+            a_match = re.search(r"(?i)^A:\s*(.+)",              block, re.DOTALL | re.MULTILINE)
 
             if not q_match or not a_match:
-                # Skip malformed blocks rather than crashing
-                continue
+                continue   # skip blocks where the model didn't follow the format
 
             front = q_match.group(1).strip()
             back  = a_match.group(1).strip()

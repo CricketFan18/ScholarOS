@@ -3,14 +3,12 @@ core/__init__.py
 ----------------
 Public API surface for the ScholarOS core layer.
 
-Import everything you need from here rather than from the individual modules:
-
     from core import ingest_pdf, VectorStore, LLMClient
 """
 
-from core.ingestion import ingest_pdf, extract_text_from_pdf, chunk_text
-from core.vector_store import VectorStore
+from core.ingestion import chunk_text, extract_text_from_pdf, ingest_pdf
 from core.llm_client import LLMClient
+from core.vector_store import VectorStore
 
 __all__ = [
     "ingest_pdf",
