@@ -82,11 +82,7 @@ Fully open and contribution-friendly under Apache 2.0.
 
 ---
 
-## Demo
-
-> 📽️ **Demo GIF coming soon** — add `docs/demo.gif` before final submission.
-
-Example workflow:
+## Example workflow:
 
 1. Run `python start.py` — the interface opens automatically in your browser
 2. Upload a PDF (lecture notes, textbook chapter, research paper)
